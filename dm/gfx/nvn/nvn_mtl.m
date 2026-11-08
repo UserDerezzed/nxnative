@@ -11059,24 +11059,88 @@ static uint64_t support_gpu(void) { static uint64_t gpu; if (!gpu) gpu = support
 // pool wraps the guest's own pages, so any pool holding an address gives its GPU address), unused entries starting at ~0. Rebuilt when the pools change; the replaced table goes through
 // deferred release, so submissions encoded with it keep it. Only pools something gave an address in are listed (mtl_pool_addressed), each made resident, as the shader may reach any of them
 static id<MTLBuffer> g_gmem_buf; static uint64_t g_gmem_gen;
+typedef struct { uintptr_t base, end; uint64_t hash, gpu; __strong id<MTLBuffer> buf; int used; } gmem_run_ent;
+enum { GMEM_RUN_MAX = 1024, GMEM_RUN_SPAN = 64u << 20 };
+static gmem_run_ent g_gmem_runs[GMEM_RUN_MAX]; static int g_gmem_nruns;
+static id<MTLBuffer> gmem_run_buf(uintptr_t base, uintptr_t end, uint64_t hash, uint64_t *gpu) {
+    for (int i = 0; i < g_gmem_nruns; i++) {
+        if (g_gmem_runs[i].base == base && g_gmem_runs[i].end == end && g_gmem_runs[i].hash == hash && g_gmem_runs[i].buf) {
+            g_gmem_runs[i].used = 1; *gpu = g_gmem_runs[i].gpu; return g_gmem_runs[i].buf;
+        }
+    }
+    id<MTLBuffer> rb = [g_dev newBufferWithBytesNoCopy:(void *)base length:end - base options:MTLResourceStorageModeShared deallocator:nil];
+    if (!rb) return nil;
+    res_add(rb);
+    int slot = -1;
+    for (int i = 0; i < g_gmem_nruns; i++) if (!g_gmem_runs[i].used) { slot = i; break; }
+    if (slot < 0 && g_gmem_nruns < GMEM_RUN_MAX) slot = g_gmem_nruns++;
+    if (slot >= 0) {
+        if (g_gmem_runs[slot].buf) defer_obj_release(g_gmem_runs[slot].buf);
+        g_gmem_runs[slot] = (gmem_run_ent){base, end, hash, rb.gpuAddress, rb, 1};
+    } else {
+        defer_obj_release(rb);
+    }
+    *gpu = rb.gpuAddress;
+    return rb;
+}
+enum { GMEM_SPARES = 8 };
+static struct { __strong id<MTLBuffer> buf; uint64_t fence; } g_gmem_spare[GMEM_SPARES]; static int g_ngmem_spare;
+static id<MTLBuffer> gmem_table_take(void) {
+    size_t len = DMSH_GMEM_MAP_ENTRIES * DMSH_GMEM_MAP_ENTRY; uint64_t done = g_done;
+    for (int i = 0; i < g_ngmem_spare; i++) if (g_gmem_spare[i].fence <= done) {
+        id<MTLBuffer> b = g_gmem_spare[i].buf; g_gmem_spare[i] = g_gmem_spare[--g_ngmem_spare]; g_gmem_spare[g_ngmem_spare].buf = nil; return b; }
+    id<MTLBuffer> b = [g_dev newBufferWithLength:len options:MTLResourceStorageModeShared];
+    if (b) res_add(b);
+    return b;
+}
+static void gmem_table_give(id<MTLBuffer> b) {
+    if (!b) return;
+    if (g_ngmem_spare == GMEM_SPARES) {
+        int o = 0; for (int i = 1; i < GMEM_SPARES; i++) if (g_gmem_spare[i].fence < g_gmem_spare[o].fence) o = i;
+        defer_obj_release(g_gmem_spare[o].buf); g_gmem_spare[o] = g_gmem_spare[--g_ngmem_spare]; g_gmem_spare[g_ngmem_spare].buf = nil;
+    }
+    g_gmem_spare[g_ngmem_spare].buf = b; g_gmem_spare[g_ngmem_spare].fence = g_fence + 1; g_ngmem_spare++;
+}
 static id<MTLBuffer> gmem_map(void) {
     uint64_t gen = atomic_load(&g_pool_gen);
     if (g_gmem_buf && g_gmem_gen == gen) return g_gmem_buf;
-    id<MTLBuffer> b = [g_dev newBufferWithLength:DMSH_GMEM_MAP_ENTRIES * DMSH_GMEM_MAP_ENTRY options:MTLResourceStorageModeShared];
-    uint8_t *t = (uint8_t *)b.contents; memset(t, 0, b.length);
+    static uint8_t scratch[DMSH_GMEM_MAP_ENTRIES * DMSH_GMEM_MAP_ENTRY];
+    uint8_t *t = scratch; memset(t, 0, sizeof scratch);
     for (int k = 1; k < DMSH_GMEM_MAP_ENTRIES; k++) memset(t + (size_t)k * DMSH_GMEM_MAP_ENTRY, 0xff, 8);
-    int n = 1, over = 0; uint64_t end = 0;
+    int n = 1, over = 0, added_res = 0; uint64_t end = 0;
     pthread_mutex_lock(&g_mu);
+    for (int i = 0; i < g_gmem_nruns; i++) g_gmem_runs[i].used = 0;
     for (int k = 0; k < g_nbig; k++) if (!g_big[k].full && addr_meets(g_big[k].lo, g_big[k].hi)) { int n = big_new(&g_big[k], g_big[k].a, g_big[k].b, g_big[k].b, 0); if (n >= 0) g_big[k].full = n + 1; }   // the pool table reaches all of a large pool
     gen = atomic_load(&g_pool_gen); pidx_sort();
     for (int k = 0; k < g_npool; k++) {
         pool_ent *p = &g_pools[g_pidx[k]];
         if (!addr_meets(p->lo, p->hi)) continue;
-        if (!p->res) { res_add(p->buf); p->res = 1; g_pool_res_n++; }
+        if (!p->res) { res_add(p->buf); p->res = 1; g_pool_res_n++; added_res = 1; }
         uint64_t lo = MAX((uint64_t)p->lo, end), hi = p->hi;
         if (lo >= hi) continue;
+        uintptr_t rbase = p->base, rend = p->end;
+        uint64_t rhash = (uint64_t)p->lo ^ ((uint64_t)p->hi << 13) ^ (uint64_t)p->gpu;
+        int j = k;
+        while (j + 1 < g_npool) {
+            pool_ent *nx = &g_pools[g_pidx[j + 1]];
+            if (!addr_meets(nx->lo, nx->hi) || nx->base > rend || (nx->end > rend ? nx->end : rend) - rbase > GMEM_RUN_SPAN) break;
+            if (!nx->res) { res_add(nx->buf); nx->res = 1; g_pool_res_n++; added_res = 1; }
+            if (nx->hi > hi) hi = nx->hi;
+            if (nx->end > rend) rend = nx->end;
+            rhash = (rhash * 1099511628211ULL) ^ (uint64_t)nx->lo ^ ((uint64_t)nx->hi << 7) ^ (uint64_t)nx->gpu;
+            j++;
+        }
+        uint64_t rgpu = p->gpu;
+        if (j > k) {
+            id<MTLBuffer> rb = gmem_run_buf(rbase, rend, rhash, &rgpu);
+            if (rb) { k = j; added_res = 1; }
+            else { hi = p->hi; rbase = p->base; rgpu = p->gpu; }
+        }
         if (n == DMSH_GMEM_MAP_ENTRIES) { over++; continue; }
-        uint64_t e[3] = {lo, hi, p->gpu - p->base}; memcpy(t + (size_t)n++ * DMSH_GMEM_MAP_ENTRY, e, sizeof e); end = hi;
+        uint64_t e[3] = {lo, hi, rgpu - rbase}; memcpy(t + (size_t)n++ * DMSH_GMEM_MAP_ENTRY, e, sizeof e); end = hi;
+    }
+    for (int i = 0; i < g_gmem_nruns; i++) if (!g_gmem_runs[i].used && g_gmem_runs[i].buf) {
+        defer_obj_release(g_gmem_runs[i].buf); g_gmem_runs[i].buf = nil;
     }
     pthread_mutex_unlock(&g_mu);
     // Each 2 MiB chunk wholly inside an entry gets a hint, so most accesses skip the binary search. A colliding chunk replaces the hint and the shader's tag check sends the other to the search
@@ -11089,10 +11153,17 @@ static id<MTLBuffer> gmem_map(void) {
         }
     }
     if (over) RED_ONCE(140, "raw global memory: %d more memory pools than the %d entries of the pool table; addresses in them are not reached", over, DMSH_GMEM_MAP_ENTRIES - 1);
-    res_add(b); res_commit();
-    if (g_gmem_buf) defer_obj_release(g_gmem_buf);
-    g_gmem_buf = b; g_gmem_gen = gen;
-    { static int said; if (!said++) MLOG("raw global memory: pool table of %d ranges (pool generation %llu), rebuilt whenever a pool comes or goes", n - 1, (unsigned long long)gen); }
+    if (g_gmem_buf && !memcmp(g_gmem_buf.contents, t, sizeof scratch)) {
+        g_gmem_gen = gen;
+        if (added_res) res_commit();
+        return g_gmem_buf;
+    }
+    id<MTLBuffer> b = gmem_table_take();
+    memcpy(b.contents, t, sizeof scratch);
+    res_commit();
+    gmem_table_give(g_gmem_buf);
+    g_gmem_buf = b; g_gmem_gen = gen; g_psnap_gen++;
+    { static int said; if (!said++) MLOG("raw global memory: pool table of %d merged ranges from %d pools (pool generation %llu), rebuilt whenever a pool comes or goes", n - 1, g_npool, (unsigned long long)gen); }
     return b;
 }
 static uint64_t gmem_map_gpu(void) { return gmem_map().gpuAddress; }
