@@ -16,7 +16,6 @@
 # "faster-movement-extra" doubles (MIT, https://github.com/afiaka87/oots2-release).
 #
 # Free camera by UserDerezzed (https://github.com/UserDerezzed).
-# Compile it for a build with
 # The free camera writes the game's code at fixed addresses and indexes its stores by register 0, so it compiles only for
 # build E0F3CCFAF50065AE (update v131072). It patches code (a cave in the text's zero padding and six hooks), so it runs
 # on the Mac only: the iPhone's code pages are the app's signed pages (docs/reference/cheats.md).
@@ -3665,8 +3664,8 @@ builds = ["E0F3CCFAF50065AE"]
 once = true
 
 [anchors.cave]
-pad = 0x400
-authored = "0x3C46C00"
+pad = 0xc00
+authored = "0x3C46400"
 
 [anchors.s_488750]
 code = { old = "D503237F", size = 0x1644, at = 0x0, fp = "f1efe4ceb9fa18887209a2366541141491c01238b485c05375ef260392a3bfaa", body = "5b68788eafd8822254e4abd8220b20fea5d5237972d21b5fbeedfbb63c5fbbfd", window = "AA0003E8 AA1303E0 14000000 00000000 D503237F D10603FF A9127BFD A9136FFC A91467FA", wat = 4, wkey = 5, wunique = true }
