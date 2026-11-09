@@ -32,6 +32,9 @@ static uint64_t g_frame = 1;        // the frame being replayed
 void own_hook_drop(id o, int keep_resident) { [g_dropped addObject:o]; [g_dropped_keep addObject:@(keep_resident)]; }
 uint64_t own_hook_submission(void) { return g_sub; }
 uint64_t own_hook_frame(void) { return g_frame; }
+int own_hook_is_program(id o) { (void)o; return 0; }
+void own_hook_prog_changed(void) {}
+uint64_t own_hook_alias_idle(const alias_key *k, id o) { (void)k; (void)o; return ALIAS_IDLE; }
 static int dropped(id o, int keep) { for (NSUInteger i = 0; i < g_dropped.count; i++) if (g_dropped[i] == o && g_dropped_keep[i].intValue == keep) return 1; return 0; }
 static int ndropped(id o, int keep) { int n = 0; for (NSUInteger i = 0; i < g_dropped.count; i++) n += g_dropped[i] == o && g_dropped_keep[i].intValue == keep; return n; }
 static int retire(id o) { pthread_mutex_lock(&g_smu); int r = own_retire_locked(o); pthread_mutex_unlock(&g_smu); return r; }   // the drain's question, once the fence has passed

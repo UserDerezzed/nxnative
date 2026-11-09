@@ -213,8 +213,8 @@ static uint32_t alias_take_over(const alias_key *nk, uint64_t now) {
             uint32_t j = 0; while (j < n && memcmp(&ks[j], k, sizeof *k)) j++;
             if (j < n) continue;   // met in an earlier cell
             void *val = nvn_hm_get(&g_alias, k); if (!val) continue;
-            uint64_t seen = (uint64_t)(uintptr_t)nvn_hm_get(&g_alias_seen, k);
-            if ((seen && now - seen < ALIAS_IDLE) || serial_table_holds(val)) continue;
+            uint64_t seen = (uint64_t)(uintptr_t)nvn_hm_get(&g_alias_seen, k), idle = own_hook_alias_idle(k, (__bridge id)val);   // an image heap's texture: never (UINT64_MAX)
+            if (idle == UINT64_MAX || (seen && now - seen < idle) || serial_table_holds(val)) continue;
             ks[n++] = *k;
         }
     }
@@ -223,6 +223,18 @@ static uint32_t alias_take_over(const alias_key *nk, uint64_t now) {
     return n;
 }
 uint32_t own_alias_take_over_locked(const alias_key *k) { return alias_take_over(k, own_hook_submission()); }
+void own_alias_touch_locked(const alias_key *k) { if (nvn_hm_get(&g_alias, k)) alias_seen(k, own_hook_submission()); }
+int own_alias_overlaps_locked(const alias_key *nk) {
+    if (!nk->pool) return 0;
+    nvn_texlayout L; nvn_tex_layout(&nk->d, &L);
+    if (!L.size) return 0;
+    int64_t lo = nk->off, hi = nk->off + (int64_t)L.size;
+    for (int64_t c = lo >> ALIAS_CELL; c <= (hi - 1) >> ALIAS_CELL; c++) {
+        uint64_t ck[2] = {nk->pool, (uint64_t)c}; const alias_cell *v = nvn_hm_get(&g_alias_cells, ck);
+        for (uint32_t i = 0; v && i < v->n; i++) if (memcmp(&v->e[i].k, nk, sizeof *nk) && v->e[i].k.off < hi && v->e[i].end > lo) return 1;
+    }
+    return 0;
+}
 void own_alias_at_locked(const void *pool, int64_t off, void (^fn)(const alias_key *k, id o)) {
     uint64_t ck[2] = {(uint64_t)(uintptr_t)pool, (uint64_t)(off >> ALIAS_CELL)}; const alias_cell *cell = nvn_hm_get(&g_alias_cells, ck);   // every entry at this offset lies in its cell
     for (uint32_t i = 0; cell && i < cell->n; i++) {
@@ -237,8 +249,8 @@ own_alias_stats own_alias_stats_locked(void) { return (own_alias_stats){.n = g_a
 
 const void *own_live_ref_locked(uint64_t k) { return nvn_hm_get(&g_by_serial, &k); }
 const void *own_live_ref(uint64_t k) { pthread_mutex_lock(&g_smu); const void *o = nvn_hm_get(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
-void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { held_add((__bridge void *)old, -1); obj_drop(old); } hm_put_id(&g_by_serial, &k, o); held_add((__bridge void *)o, 1); own_note(k); pthread_mutex_unlock(&g_smu); }
-static void live_del_locked(uint64_t k) { id old = hm_get_id(&g_by_serial, &k); if (old) { held_add((__bridge void *)old, -1); obj_drop(old); hm_del_id(&g_by_serial, &k); own_note(k); } }   // nothing to drop: the texture
+void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { held_add((__bridge void *)old, -1); obj_drop(old); } hm_put_id(&g_by_serial, &k, o); held_add((__bridge void *)o, 1); if (own_hook_is_program(o) || (old && own_hook_is_program(old))) own_hook_prog_changed(); else own_note(k); pthread_mutex_unlock(&g_smu); }
+static void live_del_locked(uint64_t k) { id old = hm_get_id(&g_by_serial, &k); if (old) { int prog = own_hook_is_program(old); held_add((__bridge void *)old, -1); obj_drop(old); hm_del_id(&g_by_serial, &k); if (prog) own_hook_prog_changed(); else own_note(k); } }   // nothing to drop: the texture
 void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); live_del_locked(k); pthread_mutex_unlock(&g_smu); }
 
 void own_tex_live_put_locked(const tex_t *t) { nvn_hm_put(&g_tex_live, &t->serial, (void *)t); }
@@ -369,30 +381,41 @@ int own_view_drop_stale(uint64_t k, id view) {
     pthread_mutex_unlock(&g_smu); return stale;
 }
 
-int own_rename_locked(id from, id to, uint64_t serial) {
+static int rename_locked(id from, id also, id to, uint64_t serial, uint64_t moved[16], unsigned *nmoved) {
     nvn_hmap *tables[] = {&g_by_serial, &g_ghost}; int named = 0;
     for (unsigned j = 0; j < 2; j++) for (uint32_t i = 0; i < tables[j]->cap; i++) {
-        if (tables[j]->vals[i] != (__bridge void *)from) continue;
+        if (tables[j]->vals[i] != (__bridge void *)from && (!also || tables[j]->vals[i] != (__bridge void *)also)) continue;
         uint64_t k; memcpy(&k, tables[j]->keys + (size_t)i * tables[j]->klen, sizeof k);
         void *old = tables[j]->vals[i]; tables[j]->vals[i] = (void *)CFBridgingRetain(to);
         nvn_hmap *cnt = j == 0 ? &g_by_serial_held : &g_ghost_held; count_add(cnt, old, -1); count_add(cnt, (__bridge void *)to, 1);   // the count moves with the name
         CFRelease(old); named |= k == serial;
+        if (nmoved) { if (*nmoved < 16) moved[*nmoved] = k; if (*nmoved <= 16) ++*nmoved; }
     }
     for (uint32_t i = 0; i < g_tex_pins.cap; i++) if (g_tex_pins.vals[i]) { tex_pin *pin = g_tex_pins.vals[i]; if (pin->object == (__bridge void *)from) tex_pin_set(pin, to); }
     int shared = 0;   // the sharing table: values replaced in place (its keys, cells and last lookups stay)
     for (uint32_t i = 0; i < g_alias.cap; i++) {
-        if (g_alias.vals[i] != (__bridge void *)from) continue;
+        if (g_alias.vals[i] != (__bridge void *)from && (!also || g_alias.vals[i] != (__bridge void *)also)) continue;
         void *old = g_alias.vals[i]; g_alias.vals[i] = (void *)CFBridgingRetain(to); CFRelease(old); shared = 1;
     }
-    if (shared) { CFSetRemoveValue(g_alias_set, (__bridge const void *)from); CFSetAddValue(g_alias_set, (__bridge const void *)to); }
+    if (shared) { CFSetRemoveValue(g_alias_set, (__bridge const void *)from); if (also) CFSetRemoveValue(g_alias_set, (__bridge const void *)also); CFSetAddValue(g_alias_set, (__bridge const void *)to); }
     return named;
 }
+int own_rename_locked(id from, id to, uint64_t serial) { return rename_locked(from, nil, to, serial, NULL, NULL); }
 // The rename and the asking serial's new object in one hold: published after g_smu was let go (as the upgrade did), a reader in between found the serial's old view, of a parent no
 // longer shared
 int own_upgrade(id from, id to, uint64_t serial, id put) {
     pthread_mutex_lock(&g_smu);
     int named = own_rename_locked(from, to, serial);
     own_epoch();   // every serial that named `from` resolves to `to` now: no one note
+    if (put && !(named && put == to)) tex_put_locked(serial, put);
+    pthread_mutex_unlock(&g_smu); return named;
+}
+// With the twin view's names too (PR #1731), and a note for each serial moved, so the texture ID caches take only those IDs again (up to 16; more is a new epoch)
+int own_upgrade_ex(id from, id also, id to, uint64_t serial, id put) {
+    pthread_mutex_lock(&g_smu);
+    uint64_t moved[16]; unsigned nmoved = 0;
+    int named = rename_locked(from, also, to, serial, moved, &nmoved);
+    if (nmoved <= 16) { for (unsigned i = 0; i < nmoved; i++) own_note(moved[i]); } else own_epoch();
     if (put && !(named && put == to)) tex_put_locked(serial, put);
     pthread_mutex_unlock(&g_smu); return named;
 }

@@ -91,6 +91,8 @@ int own_view_drop_stale(uint64_t k, id view);        // a view no longer valid: 
 // An upgrade (a texture made again with more usage): every name of `from`, the serial tables, the pins and the sharing table, moves to `to` in place (a new epoch); then `put` (when not
 // nil) is published under serial unless the rename already named it there (an sRGB / linear twin passes its view made again on `to`). One hold of g_smu. → whether serial was one of from's names
 int own_upgrade(id from, id to, uint64_t serial, id put);
+// The same, and the names of `also` (the sRGB / linear twin view of `from` being upgraded) move to `to` as well (PR #1731): each serial moved is noted (up to 16, else a new epoch)
+int own_upgrade_ex(id from, id also, id to, uint64_t serial, id put);
 // Caller holds g_smu
 uint32_t own_alias_drop_pool_locked(const void *pool);        // a pool's Finalize: its entries go (retired, own_hook_drop; a new epoch). → how many
 void own_alias_at_locked(const void *pool, int64_t off, void (^fn)(const alias_key *k, id o));   // the entries that start at off in the pool (its cell of the index)
@@ -98,6 +100,8 @@ void own_alias_each_locked(void (^fn)(const alias_key *k, id o));
 typedef struct { uint32_t n, cap, cells; uint64_t evicted, taken; } own_alias_stats;   // entries, capacity, index cells, evicted with pools / on takeover in total
 own_alias_stats own_alias_stats_locked(void);
 uint32_t own_alias_unref_locked(void);                        // entries no live or ghost entry resolves to (a walk: the memory report)
+int own_alias_overlaps_locked(const alias_key *k);
+void own_alias_touch_locked(const alias_key *k);              // k's entry, if it has one, is marked looked up now (a hit through the serial table; PR #1731)            // another entry of k's pool overlaps k's bytes (the cells of the index; PR #1731's retired-ID check)
 
 // Retirement eligibility (see above). Caller holds g_smu
 int own_retire_locked(id o);    // a retired resource whose fence has passed: 1, it may leave the residency set; 0, an entry holds it: the owner keeps it (the caller drops only its reference)
@@ -132,6 +136,9 @@ void own_each_locked(void (^fn)(uint64_t serial, id o, int ghost));
 void own_hook_drop(id o, int keep_resident);   // an object the owner lets go: released after the submission in flight (keep_resident: it stays in the residency set, as something else holds it)
 uint64_t own_hook_submission(void);            // the submission being encoded (g_fence + 1): a lookup's mark, which ALIAS_IDLE and GHOST_IDLE_SUBS count from
 uint64_t own_hook_frame(void);                 // the frame being replayed (presents so far): a ghost entry's use, which GHOST_IDLE counts from
+int own_hook_is_program(id o);                 // o is a program (NvProg): its entry's changes bump the replay layer's program generation instead of g_ser_gen (PR #1731)
+void own_hook_prog_changed(void);              // a program entry was added, replaced or removed
+uint64_t own_hook_alias_idle(const alias_key *k, id o);   // the submissions after its last lookup a takeover spares shared entry k (ALIAS_IDLE, longer for a compressible texture; UINT64_MAX: never, an image heap's)
 
 // ---- Queries and seams for the tests (t_serial_owner links the owner alone; the replay layer does not call these). Caller holds g_smu
 const void *own_live_ref_locked(uint64_t k);
