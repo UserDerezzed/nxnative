@@ -242,6 +242,10 @@ static rec_t *rec_put(uint32_t op, uint32_t nobj) {
     }
     rec_t *r = &g_rb_cur->r[g_rb_cur->n++]; r->op = op; r->nobj = nobj; return r;
 }
+// DM_NVN_REC_NODRAIN=1 (experiment): a submission's end only hands its records over (rec_publish) instead of waiting for the encode thread (rec_drain). The commit, its event signal and
+// every object a record uses are records themselves, in order, and whatever waits for the GPU or uses another queue still drains first (q_cb, the indirect-count event), so the replay can
+// translate the next submission while the encode thread encodes this one: in Ocarina of Time's Hyrule Field the end-of-submission drain (36 a frame) was 20% of the replay thread
+static int rec_nodrain(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_REC_NODRAIN"); on = e && atoi(e) > 0; if (on) MLOG("deferred encoding: submissions end without waiting for the encode thread (DM_NVN_REC_NODRAIN)"); } return on; }
 // Hand over what is recorded and wait until the encode thread has made every call
 static void rec_drain(void) {
     if (!g_rb_started) return;
