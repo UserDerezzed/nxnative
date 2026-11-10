@@ -41,8 +41,10 @@
 #define DMSH_PUSH_BANK 24
 #define DMSH_PUSH_SIZE 0x100             // bytes of a block
 
-// Uniform bounds: a read of a game uniform slot (c[3 + reg]) past the size the game bound gives 0, as Maxwell's constant buffers do. The translator reads each slot's bound size from
-// a table in a bank of its own (TranslationFlags.MetalUniformBounds, Ryujinx Constants.NxUniformSizesBank), which the host fills from the current bindings
+// Uniform bounds: a read of a game uniform slot (c[3 + reg]) past the size the game bound gives 0, as Maxwell's constant buffers do (TranslationFlags.MetalUniformBounds). For the reads
+// at fixed offsets the host does it: the reflection gives each slot's bytes read so ("fixed"), and a binding shorter than that is encoded with zeros up to there (nvn_mtl.m ub_padded).
+// A read at a computed offset is compared in the shader with the slot's bound size, from a table in a bank of its own (Ryujinx Constants.NxUniformSizesBank) that the host fills from
+// the current bindings; only a shader with such a read has the table
 #define DMSH_CBSIZE_BANK 25
 #define DMSH_CBSIZE_SLOTS 14             // a u32 for each of uniform slots 0 to 13, as four uint4: 64 bytes
 #define DMSH_C0_POINT_SIZE 0x610         // graphics stages: the largest point size, to which GLSLC clamps a shader-written gl_PointSize (Super Mario Odyssey's point sprites)
@@ -52,7 +54,7 @@
 #define DMSH_C0_BASE_INSTANCE 0x644      // graphics stages: the draw's base instance, which GLSLC adds to Maxwell's instance ID (Pokémon Legends: Z-A's occlusion boxes)
 
 // Binding kinds: the "kind" of each binding in a shader's <key>_b.json, as the build writes it and the host reads it (nvn_refl.m turns each into an NVN_RB_* code, nvn_refl.h)
-#define DMSH_KIND_CBUF "cbuf"            // uniform buffer slot reg (c[3 + reg])
+#define DMSH_KIND_CBUF "cbuf"            // uniform buffer slot reg (c[3 + reg]); fixed = its bytes the shader reads at fixed offsets
 #define DMSH_KIND_C1 "c1"                // the shader's own constant segment c[1] (its bytes are the json's c1)
 #define DMSH_KIND_DRVCB "drvcb"          // a driver segment, c[bank] (bank 0 or 2): NVN_RB_DRV0 / NVN_RB_DRV2
 #define DMSH_KIND_CBSIZE "cbsize"        // the uniform slots' bound sizes, c[DMSH_CBSIZE_BANK]: NVN_RB_CBSIZE
@@ -99,6 +101,12 @@
 
 // The alpha test's state (dm/gfx/tools/dmsh_alpha.py, the _a entry points of the <key>_bx libraries): uint function (NVN_ALPHA_FUNC_*), float reference, at this fragment buffer index (nvn_mtl.m at_bind)
 #define DMSH_ALPHA_BUFFER 30             // the fragment argument table's last binding; translated shaders use only buffer 0 there
+
+// NVIDIA's "zero times anything is zero" float blend option, which NVN's driver switches on (SET_BLEND_FLOAT_OPTION; dm/gfx/tools/dmsh_rewrite.py blend_zero): a uint at this fragment buffer
+// index, DMSH_BLEND_ZERO_BITS bits per colour output from bit 0: 0 = the output's source colour weight is not known to be zero, 1 = it is zero where the output's alpha is 0 (SRC_ALPHA),
+// 2 = where its alpha is 1 (ONE_MINUS_SRC_ALPHA) (nvn_mtl.m bz_bind). A factor of ZERO needs none: Apple's blender leaves that term out (dm/gfx/tests/t_blend_zero.m)
+#define DMSH_BLEND_BUFFER 28
+#define DMSH_BLEND_ZERO_BITS 2
 
 // Border colours Metal has no sampler state for (it has transparent black, opaque black and opaque white): the build gives each sampler member a shader samples through a twin,
 // <member>_w, and the shader a block it reads per sample, r + (twin sample - r) * k when the sampler's bit is set (dmsh_rewrite.py border_emu, nvn_border.h)

@@ -680,7 +680,9 @@ def geometry_finish(key, w, j, c1):
         dmsh_geometry.flatten_sets(spv)
         r = subprocess.run([SPIRV_CROSS, *dmsh_atomic.cross_args(XC, spv), spv], capture_output=True, text=True)
         if r.returncode: return 'geometry MSL failed', r.stderr.strip()[:160], None
-        plain = dmsh_geometry.topology_pointer(dmsh_reflect.pool_arrays(dmsh_rewrite.precise(dmsh_atomic.check_msl(r.stdout))))
+        try: selected = dmsh_fetch.select_guards(dmsh_rewrite.precise(dmsh_atomic.check_msl(r.stdout)))   # bounded uniform reads as selects (see dmsh_fetch.select_guards)
+        except ValueError as e: return 'geometry MSL failed', str(e)[:160], None
+        plain = dmsh_geometry.topology_pointer(dmsh_reflect.pool_arrays(selected))
         src = dmsh_geometry.capture_input(plain)
         res = json.load(open(os.path.join(w, k + '.res.json')))
         refl = {'key': key + '_bg' + str(t), 'route': 'B', 'chain': CHAIN, 'dm_ctl': key,
@@ -710,7 +712,9 @@ def geometry_finish(key, w, j, c1):
             spv = os.path.join(w, k + '.reader.spv'); dmsh_geometry.flatten_sets(spv)
             r = subprocess.run([SPIRV_CROSS, *dmsh_atomic.cross_args(XC, spv), spv], capture_output=True, text=True)
             if r.returncode: return 'geometry reader failed', r.stderr.strip()[:160], None
-            reader = dmsh_entry.vs_layer(dmsh_entry.vs_init(dmsh_geometry.reader(dmsh_reflect.pool_arrays(dmsh_rewrite.precise(dmsh_atomic.check_msl(r.stdout))))))
+            try: selected = dmsh_fetch.select_guards(dmsh_rewrite.precise(dmsh_atomic.check_msl(r.stdout)))
+            except ValueError as e: return 'geometry reader failed', str(e)[:160], None
+            reader = dmsh_entry.vs_layer(dmsh_entry.vs_init(dmsh_geometry.reader(dmsh_reflect.pool_arrays(selected))))
             analysis, full = dmsh_entry.vs_depth(reader)
             meta = {'key': key + '_bgv', 'route': 'B', 'chain': CHAIN, 'dm_ctl': key,
                     'stage': 'vs', 'entry': 'main0', 'entry_z': 'main0_z', 'msl_entry_kind': 'vertex',
@@ -751,6 +755,8 @@ def finish(key, w, j, c1):
     try: src = dmsh_atomic.check_msl(src)
     except ValueError as e: return 'image atomic MSL failed', str(e), None
     src = dmsh_rewrite.precise(src)   # min / max / clamp with Maxwell's NaN results (see precise)
+    try: src = dmsh_fetch.select_guards(src)   # bounded uniform reads as a load and a select, as the translator means them, not a branch for each (see dmsh_fetch.select_guards)
+    except ValueError as e: return 'uniform bounds rewrite failed', str(e)[:160], None
     src = dmsh_rewrite.mul_extended(src)   # scalar extended products without the optnone wrapper (see mul_extended)
     try: src = dmsh_rewrite.gather_offsets(src)   # four gathers instead of a wrapper's loop over their offsets (see gather_offsets)
     except ValueError as e: return 'gather offsets rewrite failed', str(e)[:160], None
@@ -763,6 +769,8 @@ def finish(key, w, j, c1):
     src = dmsh_wide.wide_loads(src)   # storage words the translator split, read whole again (see dmsh_wide.py)
     src = dmsh_rewrite.border_emu(src)   # border colours Metal lacks (see border_emu)
     if j['stage'] == 'ps': src = dmsh_rewrite.frag_z_snap(src)[0]   # gl_FragCoord.z against a depth of its own surface (see frag_z_snap)
+    blend0 = 0
+    if j['stage'] == 'ps': src, blend0 = dmsh_rewrite.blend_zero(src)   # a zero blend weight makes 0 of a NaN colour, as NVIDIA's blender does; before the entry points that share main0's body (see blend_zero)
     open(msl, 'w').write(src)
     first, spill = [], 0
     mesh = j.get('mesh_stage')
@@ -823,7 +831,7 @@ def finish(key, w, j, c1):
             **({'layer_out': True} if j['stage'] == 'vs' and dmsh_entry.layer_out(src) else {}),   # main0 writes the layer (see layer_out)
             **({'entry_discard': 'main0_discard'} if discard else {}),
             **({'entry_tf': 'main0_tf', 'tf_strides': [e['stride'] if e else 0 for e in j['tf']]} if j.get('tf') else {}),
-            **({'entry_layer': 'main0_l', 'entry_layer_z': 'main0_lz', 'layer_from': lay} if lay else {}), **({'entry_u': 'main0_u'} if fu else {}), **({'entry_m': 'main0_m', 'uint_mask_m': fmask} if fu and fmask else {}), **({'entry_d': 'main0_d'} if fd else {}), **({'entries_lost': lost} if lost else {}),
+            **({'entry_layer': 'main0_l', 'entry_layer_z': 'main0_lz', 'layer_from': lay} if lay else {}), **({'entry_u': 'main0_u'} if fu else {}), **({'entry_m': 'main0_m', 'uint_mask_m': fmask} if fu and fmask else {}), **({'entry_d': 'main0_d'} if fd else {}), **({'blend_zero': True} if blend0 else {}), **({'entries_lost': lost} if lost else {}),
             **({'first_store': [{'reg': next(b['reg'] for b in binds if b['msl_name'] == n), 'word': w, 'value': v} for n, w, v in first]} if first else {}),
             **({'tg_spill': spill} if spill else {}),
             'threadgroup_size': j.get('local'), 'c1': c1.hex(), 'notes': res['notes'] + (['not in the answer table, queries use defaults'] if j.get('no_facts') else []), 'drv_reads': dr, 'drv_unfillable': dmsh_reflect.unfillable(dr, mesh['kind'] if mesh else j['stage']),
