@@ -1,5 +1,39 @@
 # nxnative
 
+> [!NOTE]
+> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`6c676444`](https://github.com/seedds/nxnative/commit/6c676444)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
+>
+> **Ocarina of Time: performance and graphics**
+> - [#1393](https://github.com/seedds/nxnative/pull/1393) `pool_skip_retired`: no out-of-GPU-memory at scene changes
+> - [#1714](https://github.com/seedds/nxnative/pull/1714) `gpu_ts_hz`: wind and leaves move at the right speed (were 19.66× too fast)
+> - [#1730](https://github.com/seedds/nxnative/pull/1730) contiguous gmem pool-run merging only (its archive hardening is superseded by main's PR 1735)
+> - [#1731](https://github.com/seedds/nxnative/pull/1731) texture upgrades, BC render targets and retired descriptor bounds kept (adapted to main's copy absorption, PR 1310)
+> - [#1732](https://github.com/seedds/nxnative/pull/1732) updated prewarm manifest and shader list
+> - [#1752](https://github.com/seedds/nxnative/pull/1752) raw global memory loads resolve their pool once (shader translator rebuilt and re-locked for it)
+> - [#1824](https://github.com/seedds/nxnative/pull/1824) texel fetches clamped at the texture edge: no hard edge in the mist
+> - [#1825](https://github.com/seedds/nxnative/pull/1825) no repeated archive scans for missing pipeline bases
+> - [#1890](https://github.com/seedds/nxnative/pull/1890) experimental opt-in fractional timing for high-fps play
+> - [#1927](https://github.com/seedds/nxnative/pull/1927) `fps_hold` off: a late frame is shown late instead of held a second vsync
+> - [#1942](https://github.com/seedds/nxnative/pull/1942) frame step does not step up on late frames with the GPU idle
+>
+> **Ocarina of Time: cheats** (in the game window's cheat panel)
+> - [#1718](https://github.com/seedds/nxnative/pull/1718) rupees and ammo, max hearts, Link speed ×1.5–×3, one-hit kill, no damage
+> - [#1949](https://github.com/seedds/nxnative/pull/1949) free camera, [#1955](https://github.com/seedds/nxnative/pull/1955) god mode, [#1963](https://github.com/seedds/nxnative/pull/1963) map select
+> - [#1960](https://github.com/seedds/nxnative/pull/1960) turning a cheat off undoes what it changed
+> - [#2014](https://github.com/seedds/nxnative/pull/2014) cheat sections fold in the panel and become submenus in the menu
+> - [#1662](https://github.com/seedds/nxnative/pull/1662) play the ocarina into the Mac's microphone (`DM_MIC=1`)
+>
+> **Switch 2 controllers and output**
+> - [#2129](https://github.com/seedds/nxnative/pull/2129) a Controller menu and panel in the game window (⌘⇧P) test a stick's drift and save its calibration in the controller, Pro Controller 2 right stick included
+> - a pad waiting for its first button (`DM_PAD_PRESS_TO_JOIN`) is kept instead of dropped
+> - [#1176](https://github.com/seedds/nxnative/pull/1176) HDR output
+>
+> **Building and diagnostics**
+> - [#366](https://github.com/seedds/nxnative/pull/366), [#1693](https://github.com/seedds/nxnative/pull/1693) faster shader builds; [#1463](https://github.com/seedds/nxnative/pull/1463) the shader split no longer hangs at 88 %; [#1691](https://github.com/seedds/nxnative/pull/1691) progress through the archive stages' silent tails
+> - [#1720](https://github.com/seedds/nxnative/pull/1720) dropped task / mesh draws are reported; [#1751](https://github.com/seedds/nxnative/pull/1751) `DM_NVN_GPUPROF_GEOM` splits pass time into geometry and pixels
+>
+> The shader chain header is regenerated for the merged translator, so build from this branch as a whole rather than cherry-picking single PRs out of it.
+
 Play your own Nintendo Switch and Switch 2 games natively on Apple silicon Macs, iPhone and iPad. One script packs your game into a Mac app or an unsigned IPA that you sideload.
 
 It is not an emulator: the game's own code runs directly on the Apple chip, with Switch graphics rebuilt on Metal. Nothing from any game is in this repository, and the project is not affiliated with Nintendo or any game publisher.
