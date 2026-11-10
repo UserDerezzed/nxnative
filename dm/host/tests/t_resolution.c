@@ -1,5 +1,6 @@
 // Exercise production memory policy with native/old/wrong-build images, at
 // every FPS choice. No game assets or executable guest code are needed.
+int nvn_fps_high_now(void) { return 60; }   // hle_nvn.c: reached once the profile allows 120 (fps_max), as t_fpslock.c stubs it
 #include "../hle_fpslock.c"
 static module_t modules[1];
 module_t *g_mod = modules; int g_nmod = 1;
