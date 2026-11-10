@@ -4504,21 +4504,6 @@ static const uint8_t *srgb_twins(uint32_t f) {
     });
     return f < 256 ? tw[f] : tw[0];
 }
-static void reup_note(const tex_t *t, const NvPkg *pk) {
-    static int on = -1; if (on < 0) on = getenv("DM_NVN_REUPLOADS") != NULL;
-    if (!on) return;
-    static int nl; if (nl++ >= 80) return;
-    uintptr_t pg = (uintptr_t)getpagesize(), a = (uintptr_t)t->mem, e = a + t->L.size;
-    uintptr_t p0 = a & ~(pg - 1), p1 = (e + pg - 1) & ~(pg - 1);
-    unsigned np = (unsigned)((p1 - p0) / pg), nd = 0, first_p = ~0u, last_p = 0;
-    for (unsigned i = 0; i < np; i++) {
-        int d = pk->sparse ? nvn_sparse_since(t->pool, p0 + (uint64_t)i * pg, pg, pk->vgen, pk->stamp)
-                           : nvn_dirty_since_span(pk->span, (const void *)(p0 + (size_t)i * pg), pg, pk->stamp);
-        if (d) { nd++; if (first_p == ~0u) first_p = i; last_p = i; }
-    }
-    MLOG("REUP ser=%llu %ux%ux%u fmt=%#x flags=%#x has_layout=%d sparse=%d mem=%p size=%llu pages=%u dirty=%u(%u..%u) copies=%llu",
-         (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format, t->d.flags, t->has_layout, pk->sparse, t->mem, (unsigned long long)t->L.size, np, nd, first_p, last_p, (unsigned long long)pk->copies);
-}
 static _Atomic uint64_t g_stat_ghost_skip;
 static id<MTLTexture> tex_mtl_(const tex_t *ct, int treg_retired, int *in_storage) {
     tex_t *t = (tex_t *)ct;
@@ -4614,7 +4599,6 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct, int treg_retired, int *in_storag
                 return pk->view ? pk->view : pk->tex;
             }
             if (!whole && !pk->sparse && pkg_edges_clean(pk, t)) return pk->view ? pk->view : pk->tex;   // only the pages it shares with other data were written
-            reup_note(t, pk);
             // Pool content changed (streamed assets written into the same storage, a movie frame): switch to another texture, as in-flight draws still read the old one. That is the spare
             // when the GPU is done with it (see NvPkg), else a new one; the old one becomes the spare (pkg_upload_ made nt resident)
             id<MTLTexture> reuse = nil;
