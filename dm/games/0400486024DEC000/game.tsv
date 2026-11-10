@@ -43,6 +43,7 @@ fps_target	60
 # A late frame is shown late rather than held a second vsync (the game still steps by the vsyncs that passed, so its speed stays right): on a MacBook Air M4 the bridge in Kokiri
 # Forest runs at about 52 fps this way (frame p50 19.5 ms), against a steady 30 with the hold; the launcher's Hold frames when late turns it back on
 fps_hold	off
+fps_max	120
 
 # ---- Graphics ----
 # The game turns the difference of two raw counter reports into its wind and particle time step at the Switch 2's system counter rate. At NVN's 614.4 MHz the step was 19.66 times too large: foliage, leaves and hanging plants moved about 20 times too fast

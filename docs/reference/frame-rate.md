@@ -664,6 +664,15 @@ Frame pacing: the host's frame step, engine frame limiters, present intervals an
 - **Result on Ocarina of Time, an M6:** no measurable change. Its 4,758 marked pixel shaders were rebuilt with each load over the same library (chain `f9f01e4f9994`), and the game was measured standing on the Kokiri Forest deck, 40 s a run. GPU p50 was 14.38 ms with either load (5 runs plain, 13.99–14.88; 4 atomic, 14.28–15.34). The pictures matched within run-to-run noise. The gain the contributor measured is on an iPad Pro M5 and is not checked here.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), reported with the iPad figures by a contributor in [discussion #1789](https://github.com/seedds/nxnative/discussions/1789).
 
+## Experimental fractional frame-step contract
+
+**Symptom:** A game whose simulation divides a base rate by its selected frame rate cannot run at arbitrary high display rates using whole 1/60-second steps.
+
+**Cause:** The existing whole-vsync state contract represents integer steps. Reusing it at 90–120 frames per second changes simulation speed. The older experimental fractional override at state +0x40 also conflicts with the dynamic-resolution field now assigned there.
+
+**Fix (experimental):** A rewrite opt-in (`DM_EXPERIMENTAL_FRACTIONAL=1`) and a verified NSO build gate select a fractional stub. `FPS_FRACTIONAL=2` names elapsed seconds at +0x38, a runtime marker at +0x3c, and the floating-point override at +0x44. The loader rejects legacy contract 1. Dynamic resolution retains +0x40. Normal rewrites retain the existing whole-vsync stub. The host requests 120 only with a declared contract; movie, thermal and sub-120-Hz display caps still apply. Deterministic clocks and `DM_FRAME_DELTA=0` disable high-rate pacing. Elapsed-time smoothing and the bounded hitch step are inherited experimental policy, not a guarantee of exact time recovery after long stalls.
+
+**Found on:** [Ocarina of Time](../../dm/games/0400486024DEC000/README.md#experimental-fractional-timing-review). Open: current-main gameplay, movie/audio transitions, long stalls and iOS validation. This contract does not establish support for other titles.
 ### Archive searches repeated while the build table is full
 
 - **Symptom:** a busy scene runs far below what its GPU time allows, with the main thread busy for most of each second. The `pipelines up to frame` line shows archive lookups that found none in the thousands per 300 frames, at about 3 ms each, many draws with a hybrid pipeline, and `in flight 384`. Ocarina of Time's castle town market: 9,208 searches, 30.5 s in 300 frames, CPU translation 114 ms a frame.
