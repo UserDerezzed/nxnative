@@ -134,11 +134,12 @@ int main(void) { @autoreleasepool {
     id<MTLBuffer> b10 = table();
     CHECK(alias_taken() > taken, "texture 5 took the storage over");
     CHECK(g_stat_pool_builds == builds && entry(b10, 5) != dummy_of(b10), "the takeover builds no table");
-    CHECK(entry(b10, 4) != entry(b9, 4) && entry(b10, 4) != dummy_of(b10), "ID 4, whose finalized serial went with the texture it let go, resolves anew in that submission");
+    // PR 1731 (tex_mtl_ in retired mode): a finalized texture whose storage another texture took over is not made again from that storage, so ID 4 gets the dummy
+    CHECK(entry(b10, 4) != entry(b9, 4) && entry(b10, 4) == dummy_of(b10), "ID 4, whose finalized serial went with the texture it let go, gets the dummy in that submission");
     CHECK(g_treg_ep == ep, "nor sends every texture ID down the slow path");
     CHECK(!g_treg[4].view, "ID 4's view went at the submission's end");
     id<MTLBuffer> b11 = table();
-    CHECK(g_stat_pool_builds == builds && entry(b11, 4) != dummy_of(b11), "the next submission takes ID 4 again without building the table");
+    CHECK(g_stat_pool_builds == builds && entry(b11, 4) == dummy_of(b11), "the next submission keeps ID 4 on the dummy without building the table");
     same_as_whole(b11, "the patched table holds what a table built whole does (takeover)");
 
     // Past the budget: a texture registered since the walk that no shader has read is not made, as in a walk (its entry is its stand-in, or the dummy with DM_NVN_POOL_STANDIN=0), and the table is patched rather than built whole. ID 6 names a
