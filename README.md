@@ -1,7 +1,7 @@
 # nxnative
 
 > [!NOTE]
-> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`ab41d6a1`](https://github.com/seedds/nxnative/commit/ab41d6a1)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
+> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`6a6a018d`](https://github.com/seedds/nxnative/commit/6a6a018d)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
 >
 > **Ocarina of Time: performance and graphics**
 > - [#1393](https://github.com/seedds/nxnative/pull/1393) `pool_skip_retired`: no out-of-GPU-memory at scene changes
@@ -11,7 +11,6 @@
 > - [#1732](https://github.com/seedds/nxnative/pull/1732) updated prewarm manifest and shader list
 > - [#1752](https://github.com/seedds/nxnative/pull/1752) raw global memory loads resolve their pool once (shader translator rebuilt and re-locked for it)
 > - [#1824](https://github.com/seedds/nxnative/pull/1824) texel fetches clamped at the texture edge: no hard edge in the mist
-> - [#1825](https://github.com/seedds/nxnative/pull/1825) no repeated archive scans for missing pipeline bases
 > - [#1890](https://github.com/seedds/nxnative/pull/1890) experimental opt-in fractional timing for high-fps play
 > - [#1468](https://github.com/seedds/nxnative/pull/1468) a long render pass starts on the GPU while it is still encoded (`DM_NVN_PASS_SPLIT`)
 > - the main submission keeps up to 16 command allocators (was 8): the encode thread no longer waits for one about 5 times a frame (Hyrule Field at a 120 fps target 67.1 → 69.8 fps on an M3 Max)
