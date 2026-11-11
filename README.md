@@ -1,7 +1,7 @@
 # nxnative
 
 > [!NOTE]
-> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`6a6a018d`](https://github.com/seedds/nxnative/commit/6a6a018d)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
+> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`084f5aa5`](https://github.com/seedds/nxnative/commit/084f5aa5)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
 >
 > **Ocarina of Time: performance and graphics**
 > - [#1393](https://github.com/seedds/nxnative/pull/1393) `pool_skip_retired`: no out-of-GPU-memory at scene changes
@@ -26,7 +26,6 @@
 >
 > **Switch 2 controllers and output**
 > - [#2129](https://github.com/seedds/nxnative/pull/2129) a Controller menu and panel in the game window (⌘⇧P) test a stick's drift and save its calibration in the controller, Pro Controller 2 right stick included
-> - a pad waiting for its first button (`DM_PAD_PRESS_TO_JOIN`) is kept instead of dropped
 > - [#1176](https://github.com/seedds/nxnative/pull/1176) HDR output
 >
 > **Building and diagnostics**
