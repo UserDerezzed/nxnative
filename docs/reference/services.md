@@ -394,6 +394,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `pad_hid_mac.h` knows a device by its registry entry ID (`hidpad_entry`): a second reference to a known entry is ignored in every list.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), one Pro Controller over Bluetooth on the Mac: no music in Kokiri Forest gameplay or its cutscenes, back once the pad was read once.
 
+### A keyboard receiver that declares a gamepad takes player 1
+
+- **Symptom:** on the Mac, with a keyboard and mouse receiver plugged in, the log shows `controller '<receiver>' (HID) connected: player 1` and the real controller as player 2; a one-player game takes no input from it and opens the controller applet again and again (`hid controller applet: 1 to 1 players wanted, 2 connected`).
+- **Cause:** the receiver declares a Generic Desktop GamePad or Joystick collection, so it matches the raw HID pad filter (`hidpad_start`), and a raw HID pad took the lowest free player at its connection. A HID descriptor only claims a controller: nothing in it tells a receiver that never sends a report through that collection from a pad at rest. `+[GCController supportsHIDDevice:]` answers YES for this receiver and GameController never lists it, so since the two-second wait for such devices (463d21f7) it was read as HID; before that it was skipped.
+- **Fix:** a raw HID pad is a player from its first button press, not from its connection (`hidpad_first_press`, `front_mac.m`), through the path of [Press a button to join](../settings.md#press-a-button-to-join) but with the slot a connecting controller takes (`pad_slot_take`): the log says `press a button to play`, then `a button pressed: player N`. A device that never presses takes no player. Identical pads read here (twins) are models GameController lists and stay players at their connection.
+- **Open:** not run with such a receiver (none here): the issue stays open for the reporter's retest. The applet opening in a loop when a one-player game sees two players is a cause of its own ([issue #2237](https://github.com/seedds/nxnative/issues/2237)).
+- **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), a Keychron Link receiver (3434:d030) over USB and a Pro Controller over Bluetooth, macOS 27.0.1 ([issue #1657](https://github.com/seedds/nxnative/issues/1657)).
+
 ### SDK 20 six-axis sensor and amiibo (`nfp`) calls
 
 - **Symptom:** SDK 20 calls that reach a service; `nfp`'s `AttachActivateEvent` / `AttachDeactivateEvent` crashed in the SDK at `sdk+0x3f2a78`.
@@ -488,6 +496,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the host now recognizes gestures from the same touch points, by yuzu's rules plus an 8 px slop before a touch counts as moving (`hle_touch.c` `gesture_sample`, unit test `t_gesture`; only in handheld mode, as touches): Touch, Press after 0.5 s, Pan, Pinch / Rotate with two fingers, Cancel on a change in the finger count, then Tap (IsDoubleTap within 0.35 s), Swipe above 400 px/s or Complete, and Idle. For every game.
 - **Check:** every menu, the cards, the map's drag and flick worked by touch with it. `DM_TOUCH_LOG=1` logs each gesture entry, and a `DM_CTL` line `drag <x0> <y0> <x1> <y1> [seconds]` moves a finger for testing pans and swipes on the Mac.
 - **Found on:** [Taiko Risshiden V DX](../../dm/games/0100346017304000/README.md) (SDK 12.3.3, Koei Tecmo's KTGL).
+
+### Touch sampling numbers across docked and handheld
+
+- **Symptom:** a game started docked takes no touch after it is switched to handheld (the in-game menu on the iPad, `DM_OE_SCRIPT=opmode=0@…` on the Mac), though `DM_TOUCH_LOG=1` logs its reads with the touch points. Started handheld, the same game takes taps.
+- **Cause:** docked reads of `GetTouchScreenState(s)` were numbered from the npad sampling counter (from 65536) and handheld reads from `hle_touch.c`'s own count (from 1). Unity's touch reader takes a state only if its sampling number is above the last one it took, and it takes the docked reads' empty states too (Aokana `main+0xd2bde0`; the last number is cleared at init, `main+0xd2b588`, and stored at `main+0xd2bdec`). After the switch every handheld state fell below the docked numbers and was dropped. Started handheld and then docked and back, the same happened.
+- **Fix:** `hle_touch.c` numbers the states of both modes from its one count: `touch_read` (`hle_hid.c`) always calls `touch_fill_n`, with `points` 0 in console mode, which gives an empty state with the next number and leaves the fingers (their Start and End) for the next handheld read. `DM_TOUCH_LOG` prints the number the game sees. For every game.
+- **Check:** `dm/host/tests/t_touch.c` reads in console mode between handheld reads (an empty state with the next number, the Start of a finger pressed meanwhile kept), and `dm/host/tests/t_hid.c` (`t_touch_sampling`) reads docked, handheld, docked and handheld again through both `GetTouchScreenState` and `GetTouchScreenStates` (every read reaches `touch_fill_n`, points asked for in handheld mode only). In Aokana on the Mac (the PR author's runs, headless, a tap every 1.5 s from 20 s, with the first form of the fix, which numbered both modes from the npad counter): a tap during the opening movie stops it and the title comes up, before the fix only when started handheld; with it, also started docked and switched with `DM_OE_SCRIPT=opmode=0@12`, and started handheld, docked at 12 s and back at 24 s. Not run on the iPad.
+- **Found on:** Aokana - Four Rhythms Across the Blue (`0100990011866000`, Unity 2018.4.22f1 IL2CPP; profile in PR #1372), on the iPad: started docked, then handheld and Tap in the in-game menu, and no tap reached the game.
 
 ### Mac pointer stays over the game
 
