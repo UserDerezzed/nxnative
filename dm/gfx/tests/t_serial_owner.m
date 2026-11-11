@@ -378,7 +378,7 @@ int main(void) { @autoreleasepool {
         g_sub += ALIAS_IDLE;
         uint64_t taken = ast().taken; notes = g_changed_n; [g_dropped removeAllObjects]; [g_dropped_keep removeAllObjects];
         CHECK(own_alias_publish(s5.serial, &kg, g) == g && !has(&ka) && !shared(a) && has(&kg), "past ALIAS_IDLE submissions an entry only a ghost entry holds is taken over");
-        CHECK(dropped(a, 0) && tex_get(f.serial) == a && holds(a), "it is retired (out of the residency set unless held: nvn_mtl.m's retirement waits for the ghost entry), and the ghost entry still resolves it");
+        CHECK(dropped(a, 0) && !tex_get(f.serial) && !holds(a), "it is retired, and the ghost serials that resolved it go with it (PR #2312's ghost purge: its storage belongs to the new texture now)");
         CHECK(ast().taken == taken + 1 + !has(&kr) && g_changed_n > notes, "the takeover is counted and reported");
         CHECK(has(&kr), "the entry s4 holds live stays");
         step("takeover");

@@ -97,11 +97,13 @@ int own_upgrade_ex(id from, id also, id to, uint64_t serial, id put);
 uint32_t own_alias_drop_pool_locked(const void *pool);        // a pool's Finalize: its entries go (retired, own_hook_drop; a new epoch). → how many
 void own_alias_at_locked(const void *pool, int64_t off, void (^fn)(const alias_key *k, id o));   // the entries that start at off in the pool (its cell of the index)
 void own_alias_each_locked(void (^fn)(const alias_key *k, id o));
-typedef struct { uint32_t n, cap, cells; uint64_t evicted, taken; } own_alias_stats;   // entries, capacity, index cells, evicted with pools / on takeover in total
+typedef struct { uint32_t n, cap, cells; uint64_t evicted, taken, idle; } own_alias_stats;   // entries, capacity, index cells, evicted with pools / on takeover / by the idle sweep in total
 own_alias_stats own_alias_stats_locked(void);
 uint32_t own_alias_unref_locked(void);                        // entries no live or ghost entry resolves to (a walk: the memory report)
 int own_alias_overlaps_locked(const alias_key *k);
-void own_alias_touch_locked(const alias_key *k);              // k's entry, if it has one, is marked looked up now (a hit through the serial table; PR #1731)            // another entry of k's pool overlaps k's bytes (the cells of the index; PR #1731's retired-ID check)
+void own_alias_touch_locked(const alias_key *k);
+uint32_t own_alias_evict_idle_locked(uint64_t idle);          // the idle sweep (PR #2312): entries no live or ghost entry resolves to (nor a view of them) and no lookup found in the last
+                                                              // `idle` submissions go, with the ghost serials of their textures; a new epoch. → how many              // k's entry, if it has one, is marked looked up now (a hit through the serial table; PR #1731)            // another entry of k's pool overlaps k's bytes (the cells of the index; PR #1731's retired-ID check)
 
 // Retirement eligibility (see above). Caller holds g_smu
 int own_retire_locked(id o);    // a retired resource whose fence has passed: 1, it may leave the residency set; 0, an entry holds it: the owner keeps it (the caller drops only its reference)
@@ -128,7 +130,7 @@ int own_note_at(uint64_t gen, uint64_t *serial);                 // the serial n
                                                                  // change made no note (own_epoch) or the log has been overwritten since: the reader rebuilds whole
 
 // The tables' sizes, and every object they hold (live entries first, then ghost ones). Caller holds g_smu
-typedef struct { uint32_t live, live_cap, ghost, retire_wait; uint64_t ghost_puts; } own_stats;
+typedef struct { uint32_t live, live_cap, ghost, retire_wait; uint64_t ghost_puts, ghost_purged; } own_stats;   // ghost_purged: ghost serials that went with a shared texture let go (PR #2312)
 own_stats own_stats_locked(void);
 void own_each_locked(void (^fn)(uint64_t serial, id o, int ghost));
 

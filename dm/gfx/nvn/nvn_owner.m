@@ -60,6 +60,9 @@ static nvn_hmap g_ghost = {.klen = 8}; static uint64_t g_ghost_puts;
 typedef struct ghost_use { struct ghost_use *prev, *next; uint64_t serial, frame, sub; } ghost_use;   // a ghost entry's last use
 static nvn_hmap g_ghost_use = {.klen = 8};    // serial → its ghost_use: the same serials as g_ghost
 static ghost_use *g_ghost_lru, *g_ghost_mru;  // the list, least recently used first
+static uint64_t g_ghost_purged;   // ghost serials that went with a shared texture let go (ghost_purge, PR #2312)
+// DM_NVN_GHOST_N=<entries> (64..65536, default NGHOST): the size past which idle ghost entries go, for measuring (PR #2312)
+static unsigned ghost_cap(void) { static unsigned n; if (!n) { const char *e = getenv("DM_NVN_GHOST_N"); long v = e ? atol(e) : NGHOST; n = v < 64 ? 64 : v > 65536 ? 65536 : (unsigned)v; } return n; }
 // Deferred command descriptors and persistent bindings retain a texture serial independently of the guest descriptor and the bounded recently-finalized cache
 typedef struct { unsigned refs; void *object; } tex_pin;
 static nvn_hmap g_tex_pins = {.klen = 8}, g_tex_pin_objects = {.klen = sizeof(uintptr_t)};
@@ -145,7 +148,7 @@ static void alias_index(const alias_key *k, int add) {
 }
 static nvn_hmap g_alias_seen = {.klen = sizeof(alias_key)};   // key → the submission of its last lookup or creation (own_hook_submission; alias_take_over spares entries looked up lately)
 static CFMutableSetRef g_alias_set;                           // the textures in the sharing table (non-owning; "is this shared")
-static uint64_t g_alias_evicted, g_alias_taken;               // shared textures evicted on pool Finalize / when another texture took over their storage, in total (the memory report)
+static uint64_t g_alias_evicted, g_alias_taken, g_alias_idle; // shared textures evicted on pool Finalize / when another texture took over their storage / by the idle sweep, in total (the memory report)
 int own_shared_locked(id o) { return g_alias_set && o && CFSetContainsValue(g_alias_set, (__bridge const void *)o); }
 int own_keeps_locked(id o) { return tex_object_pinned(o) || own_shared_locked(o); }
 static void obj_drop(id o) { own_hook_drop(o, own_keeps_locked(o)); }   // caller holds g_smu
@@ -200,6 +203,36 @@ uint32_t own_alias_drop_pool_locked(const void *pool) {
 // texture IDs to tex_mtl_'s stale-view check (GitHub issue #2125). A retired ID's view goes at the submission's end (nvn_mtl.m's treg_finish_submission), and the pool tables take
 // those IDs again at the next one (pool_snap.trans). With no note, every takeover (about 8,400 in six minutes walking through Ocarina of Time's Kokiri Forest) sent every
 // texture ID down the slow path and made the next pool walk build the 33,025-entry table whole. Caller holds g_smu
+// A sharing entry that leaves the table takes with it the finalized serials that still resolve to its texture (the ghost ring); DM_NVN_GHOST_TAKEOVER=0 turns this off (PR #2312).
+// Without it the texture stays resident until the ring has turned (32,768 entries: about 80 s in Ocarina of Time, which finalizes some 400 textures a second), although on NVN its
+// storage already belongs to the texture that took it over: render targets the game let go pile up, 3-4 GB of them when Link walks into another area. A serial purged here resolves
+// anew (own_note), as one the table evicts does, and its place in the list of use goes with it. Views of the texture (sRGB / linear twins) are left to the ring. Ocarina of Time lays a frame's render
+// targets out with a linear allocator in one GPU-only pool, so when one changes size the others move and look like new textures. Caller holds g_smu
+static void ghost_del_locked(uint64_t k);   // below
+static void ghost_purge(void *const *objs, uint32_t n) {
+    static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_GHOST_TAKEOVER"); on = !e || atoi(e) > 0; }
+    if (!on || !n || !g_ghost.n || !g_ghost_held.n) return;
+    uint32_t held = 0; for (uint32_t j = 0; j < n; j++) { uintptr_t k = (uintptr_t)objs[j]; if (nvn_hm_get(&g_ghost_held, &k)) held++; }
+    if (!held) return;
+    uint64_t *ks = NULL; uint32_t nk = 0, cap = 0;   // the serials, collected first: ghost_del_locked changes the table
+    for (uint32_t i = 0; i < g_ghost.cap; i++) { void *v = g_ghost.vals[i]; if (!v) continue;
+        int hit = 0; for (uint32_t j = 0; j < n && !hit; j++) hit = v == objs[j];
+        if (!hit) continue;
+        if (nk == cap) { cap = cap ? cap * 2 : 64; uint64_t *nks = realloc(ks, cap * sizeof *ks); if (!nks) break; ks = nks; }
+        memcpy(&ks[nk++], g_ghost.keys + (size_t)i * g_ghost.klen, sizeof *ks); }
+    for (uint32_t i = 0; i < nk; i++) ghost_del_locked(ks[i]);   // the entry with its place in the list of use, noted
+    free(ks); g_ghost_purged += nk;
+}
+// These entries leave the sharing table and their textures are retired, with their ghost serials (the takeover and the idle sweep share it). Caller holds g_smu
+static void alias_let_go(const alias_key *ks, uint32_t n) {
+    void *gone_small[16]; void **gone = n <= 16 ? gone_small : malloc(n * sizeof *gone); uint32_t ng = 0;
+    for (uint32_t j = 0; j < n; j++) {   // the texture's address is only compared after it is retired (own_hook_drop keeps it until the submission in flight completes)
+        void *old = nvn_hm_get(&g_alias, &ks[j]);
+        if (old && alias_del(&ks[j]) && gone) gone[ng++] = old;
+    }
+    if (gone) ghost_purge(gone, ng);
+    if (gone != gone_small) free(gone);
+}
 static uint32_t alias_take_over(const alias_key *nk, uint64_t now) {
     nvn_texlayout L; nvn_tex_layout(&nk->d, &L);
     if (!L.size) return 0;
@@ -218,7 +251,7 @@ static uint32_t alias_take_over(const alias_key *nk, uint64_t now) {
             ks[n++] = *k;
         }
     }
-    for (uint32_t j = 0; j < n; j++) alias_del(&ks[j]);
+    alias_let_go(ks, n);
     if (n) { own_note(0); g_alias_taken += n; }
     return n;
 }
@@ -245,7 +278,20 @@ void own_alias_at_locked(const void *pool, int64_t off, void (^fn)(const alias_k
 void own_alias_each_locked(void (^fn)(const alias_key *k, id o)) {
     for (uint32_t i = 0; i < g_alias.cap; i++) if (g_alias.vals[i]) fn((const alias_key *)(const void *)(g_alias.keys + (size_t)i * g_alias.klen), (__bridge id)g_alias.vals[i]);
 }
-own_alias_stats own_alias_stats_locked(void) { return (own_alias_stats){.n = g_alias.n, .cap = g_alias.cap, .cells = g_alias_cells.n, .evicted = g_alias_evicted, .taken = g_alias_taken}; }
+own_alias_stats own_alias_stats_locked(void) { return (own_alias_stats){.n = g_alias.n, .cap = g_alias.cap, .cells = g_alias_cells.n, .evicted = g_alias_evicted, .taken = g_alias_taken, .idle = g_alias_idle}; }
+uint32_t own_alias_evict_idle_locked(uint64_t idle) {
+    CFMutableSetRef held = CFSetCreateMutable(NULL, 0, NULL); nvn_hmap *hs[2] = {&g_by_serial, &g_ghost};
+    for (int h = 0; h < 2; h++) for (uint32_t i = 0; i < hs[h]->cap; i++) if (hs[h]->vals[i]) { id o = (__bridge id)hs[h]->vals[i]; CFSetAddValue(held, hs[h]->vals[i]);
+        if ([o conformsToProtocol:@protocol(MTLTexture)] && ((id<MTLTexture>)o).parentTexture) CFSetAddValue(held, (__bridge const void *)((id<MTLTexture>)o).parentTexture); }
+    uint64_t now = own_hook_submission(); uint32_t n = 0; alias_key *ks = g_alias.n ? malloc(g_alias.n * sizeof *ks) : NULL;
+    for (uint32_t i = 0; ks && i < g_alias.cap; i++) { if (!g_alias.vals[i] || CFSetContainsValue(held, g_alias.vals[i])) continue;
+        const void *k = g_alias.keys + (size_t)i * g_alias.klen; uint64_t seen = (uint64_t)(uintptr_t)nvn_hm_get(&g_alias_seen, k);
+        if (!seen || now - seen >= idle) memcpy(&ks[n++], k, sizeof *ks); }
+    CFRelease(held);
+    alias_let_go(ks, n);
+    if (n) { own_epoch(); g_alias_idle += n; }
+    free(ks); return n;
+}
 
 const void *own_live_ref_locked(uint64_t k) { return nvn_hm_get(&g_by_serial, &k); }
 const void *own_live_ref(uint64_t k) { pthread_mutex_lock(&g_smu); const void *o = nvn_hm_get(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
@@ -315,7 +361,7 @@ static void ghost_del_locked(uint64_t k) {   // k's ghost entry goes with its pl
 // Idle entries past NGHOST go, least recently used first, at most `budget` of them; the first entry in use ends the walk (every one after it was used later)
 static void ghost_trim(unsigned budget) {
     uint64_t frame = own_hook_frame(), sub = own_hook_submission();
-    for (; budget && g_ghost.n > NGHOST && g_ghost_lru; budget--) {
+    for (; budget && g_ghost.n > ghost_cap() && g_ghost_lru; budget--) {
         const ghost_use *u = g_ghost_lru;
         if (frame - u->frame < GHOST_IDLE && sub - u->sub < GHOST_IDLE_SUBS) break;
         ghost_del_locked(u->serial);
@@ -445,7 +491,7 @@ uint32_t own_alias_unref_locked(void) {
     for (uint32_t i = 0; i < g_alias.cap; i++) if (g_alias.vals[i] && !CFSetContainsValue(held, g_alias.vals[i])) n++;
     CFRelease(held); return n;
 }
-own_stats own_stats_locked(void) { return (own_stats){.live = g_by_serial.n, .live_cap = g_by_serial.cap, .ghost = g_ghost.n, .retire_wait = g_retire_wait.n, .ghost_puts = g_ghost_puts}; }
+own_stats own_stats_locked(void) { return (own_stats){.live = g_by_serial.n, .live_cap = g_by_serial.cap, .ghost = g_ghost.n, .retire_wait = g_retire_wait.n, .ghost_puts = g_ghost_puts, .ghost_purged = g_ghost_purged}; }
 void own_each_locked(void (^fn)(uint64_t serial, id o, int ghost)) {
     const nvn_hmap *tables[] = {&g_by_serial, &g_ghost};
     for (int j = 0; j < 2; j++) for (uint32_t i = 0; i < tables[j]->cap; i++) {

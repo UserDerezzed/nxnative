@@ -2493,6 +2493,7 @@ static void post_complete(uint64_t fence, uint64_t c0, uint64_t c1) {
 static _Atomic int g_seg_inflight;   // main command buffers committed and not reported back yet (sub_cut)
 static void rt_preserve_bound(void);
 static void queue_program_preserve(void);
+static void alias_sweep(void);
 uint64_t mtl_sub_commit(void) {
     lc_land();   // clears still waiting (the command list ends with them)
     defer_fallback();   // Deferred merged pass: at the end of the submission there are still P draws not replayed (the normal path never gets here)
@@ -2552,6 +2553,7 @@ uint64_t mtl_sub_commit(void) {
     defer_idle_commit();   // a feedback handler that drained since this submission's own commit saw it open
     g_commit_blocks = nil;
     objc_autoreleasePoolPop(g_sub_pool); g_sub_pool = NULL;
+    alias_sweep();
     return fence;
 }
 
@@ -2719,11 +2721,14 @@ static int serial_is_program(id o);
 int own_hook_is_program(id o) { return serial_is_program(o); }
 void own_hook_prog_changed(void) { g_prog_gen++; }
 // PR #1731: an image heap's texture is never taken over (its family shares those bytes on purpose); a compressible one (Ocarina of Time's dynamic-resolution depth and colour
-// targets) is spared 1,800 submissions while the GPU has more than half of its working set to spare, ALIAS_IDLE otherwise
+// targets) is spared 1,800 submissions while the GPU's allocations stay under the hold's bound,
+// and ALIAS_KEEP_SHORT past the hold's bound (PR #2312): DM_NVN_ALIAS_KEEP_MB=<n> sets it (default half the working set the system recommends; 0 spares them ALIAS_IDLE, as any other entry)
 uint64_t own_hook_alias_idle(const alias_key *k, id o) {
     if (objc_getAssociatedObject(o, &g_image_heap_owner_key)) return UINT64_MAX;
     if (!(k->d.flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE)) return ALIAS_IDLE;
-    return g_dev.currentAllocatedSize < g_dev.recommendedMaxWorkingSetSize / 2 ? 1800 : ALIAS_IDLE;
+    static uint64_t keep = UINT64_MAX; if (keep == UINT64_MAX) { const char *e = getenv("DM_NVN_ALIAS_KEEP_MB"); keep = e ? strtoull(e, NULL, 0) << 20 : g_dev.recommendedMaxWorkingSetSize / 2; }
+    enum { ALIAS_KEEP_SHORT = 600 };
+    return !keep ? ALIAS_IDLE : g_dev.currentAllocatedSize < keep ? 1800 : ALIAS_KEEP_SHORT;
 }
 void mtl_tex_init(const tex_t *t) {
     if (!t->serial) return;
@@ -4781,7 +4786,7 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb) {
 #if TARGET_OS_IPHONE
     snprintf(avail, sizeof avail, "%llu MB", (unsigned long long)(os_proc_available_memory() >> 20));
 #endif
-    MLOG("memory up to frame %llu: resident %llu MB, GPU allocated %llu MB, deferred-release queue %lu, residency set %lu, serial objects %u, memory pools %d (resident %d; peak %d / tracking table capacity %d; freed but alive %lu, %llu MB), shared textures %u (%u of them unreferenced; evicted with pools %llu, on storage takeover %llu in total), texture re-uploads %llu in total, per-frame arena blocks created %llu in total, finalized textures still referenced %u (small table, %llu put in total), retired but held by a serial %u, recycled texture heaps made %llu, reused %llu, freed %llu, waiting %u (%llu MB); headroom to the system memory limit %s", frame, rss_mb, gpu, nd, nr, ns, live, pres, peak, cap, dead_n, dead_mb, ashared, aorph, (unsigned long long)as.evicted, (unsigned long long)as.taken, (unsigned long long)g_pkg_reuploads, (unsigned long long)g_arena_made, nghost, (unsigned long long)ghost_puts, nwait,
+    MLOG("memory up to frame %llu: resident %llu MB, GPU allocated %llu MB, deferred-release queue %lu, residency set %lu, serial objects %u, memory pools %d (resident %d; peak %d / tracking table capacity %d; freed but alive %lu, %llu MB), shared textures %u (%u of them unreferenced; evicted with pools %llu, on storage takeover %llu, by the idle sweep %llu in total), texture re-uploads %llu in total, per-frame arena blocks created %llu in total, finalized textures still referenced %u (%llu put in total, %llu purged with their shared texture), retired but held by a serial %u, recycled texture heaps made %llu, reused %llu, freed %llu, waiting %u (%llu MB); headroom to the system memory limit %s", frame, rss_mb, gpu, nd, nr, ns, live, pres, peak, cap, dead_n, dead_mb, ashared, aorph, (unsigned long long)as.evicted, (unsigned long long)as.taken, (unsigned long long)as.idle, (unsigned long long)g_pkg_reuploads, (unsigned long long)g_arena_made, nghost, (unsigned long long)ghost_puts, (unsigned long long)os.ghost_purged, nwait,
          (unsigned long long)g_rh_made, (unsigned long long)g_rh_reused, (unsigned long long)g_rh_trimmed, rh_n, (unsigned long long)(rh_bytes >> 20), avail);
     { void mtl_vc_stats(unsigned *, uint64_t *, uint64_t *), mtl_tb2_stats(uint64_t *, uint64_t *, uint64_t *, uint64_t *, uint64_t *); uint64_t mtl_tex_mis_count(void); unsigned vn; uint64_t vh, vm, tb, tm, tf, tc, tcb;
       mtl_vc_stats(&vn, &vh, &vm); mtl_tb2_stats(&tb, &tm, &tf, &tc, &tcb);
@@ -6627,6 +6632,28 @@ static void treg_finish_submission(void) {
     }
     g_ntreg_transient = 0;
     os_unfair_lock_unlock(&g_rmu);
+}
+// Sharing entries nothing else holds and no lookup found for `idle` submissions leave the table. What a live or finalized object resolves to stays, its sRGB / linear view's parent too.
+// A retired ID's view of one keeps the texture alive until that ID is registered again; the IDs that read it read 0 at the next walk. The eviction is PR #1589's (its memory guard's);
+// here the idle sweep runs it. On the submit thread
+static unsigned alias_evict_idle(uint64_t idle) {
+    os_unfair_lock_lock(&g_rmu);
+    pthread_mutex_lock(&g_smu); uint32_t n = own_alias_evict_idle_locked(idle); pthread_mutex_unlock(&g_smu);   // the walk and the eviction (nvn_owner.m)
+    os_unfair_lock_unlock(&g_rmu);
+    return n;
+}
+// Every DM_NVN_ALIAS_SWEEP frames (default 120; 0 turns it off), the sharing entries nothing holds and no lookup found for DM_NVN_ALIAS_SWEEP_IDLE submissions (default 600) leave the
+// table, so an area left behind gives its textures back while the system still has memory to give. Before, an entry whose storage no new texture took over stayed until its pool was
+// finalized: Ocarina of Time on a 24 GB Mac, walking into another area of Castle Town, went from 2.3 to 5.4-6.5 GB of textures in the residency set, about 4.8 GB of them render
+// targets the game had let go, and the system ran out of free pages (60-120 MB) with frames of 62-92 ms. On the submit thread, after a submission, with no lock held
+static void alias_sweep(void) {
+    static int every = -1; static uint64_t idle, last, lines;
+    if (every < 0) { const char *e = getenv("DM_NVN_ALIAS_SWEEP"); every = e ? atoi(e) : 120; const char *i = getenv("DM_NVN_ALIAS_SWEEP_IDLE"); idle = i ? strtoull(i, NULL, 0) : 600; }
+    if (every <= 0) return;
+    uint64_t f = atomic_load(&g_cur_frame) + 1; if (last && f - last < (uint64_t)every) return;
+    last = f;
+    @autoreleasepool { unsigned n = alias_evict_idle(idle);
+        if (n) { defer_drain(); res_commit(); if (lines++ < 24) MLOG("alias sweep at frame %llu: %u idle sharing entries let go (%llu MB allocated)", (unsigned long long)f, n, (unsigned long long)(g_dev.currentAllocatedSize >> 20)); } }
 }
 // Texture views by texture serial and view parameters, beside the per-ID view: KTGL (Age of Calamity) registers a texture into the next ID of a ring before every bind (about 21,000
 // registrations a frame in battle after the first cutscene, 5 in 6 of them a different texture than the ID held), so the per-ID view was rebuilt for nearly every bind: half the
