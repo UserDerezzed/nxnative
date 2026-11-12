@@ -1353,6 +1353,15 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **See also:** [Archive lookups asked every file](#archive-lookups-asked-every-file-so-a-few-files-made-a-start-compile-every-base-again), [Metal's archiver store filled by one flush period](#metals-archiver-store-filled-by-one-flush-period).
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [Cuphead](../../dm/games/0100A5C00D162000/README.md).
 
+### The prepare step's workers wait on one stage function
+
+- **Symptom:** "Preparing shaders" takes minutes with the CPU mostly idle: the Metal compiler service at about two cores of an 18-core Mac.
+- **Cause:** two compiles of one stage function never run at once (`arch_fn_take`, issue #815), and the prepare step handed its tasks out in list order, where one vertex shader's pipelines follow each other: the workers queued at that function's slot (about 92% of each worker's samples were in `arch_fn_take`).
+- **Fix:** `warm_interleave` hands the tasks out in turn by vertex shader, the list's order kept within each; `DM_PSO_PREPARE_INTERLEAVE=0` keeps the list order. The guard is unchanged: one function's compiles still never overlap, so a few large groups at the end still run one compile at a time.
+- **Measurement:** 6,000 of Ocarina of Time's predicted render pipelines from an empty archive on an M5 Max (18 workers, 3,354 bases compiled each time, about 10 s of it reading the list's 24,811 shaders): 123.0 s in list order, 52.8 s in turn by vertex shader. A selection that also skipped tasks whose pixel or task shader another worker was compiling measured the same (52.4 s), so it was not kept.
+- **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md#found-on-this-game).
+- **Check:** `t_pso_warm`.
+
 ### Bases of byte-identical libraries compiled again at every start
 
 - **Symptom:** every start compiles a few prewarm bases again and writes them to a new archive file, though the archive holds them: Cuphead's second and third windowed starts `bases 9 compiled, 19 from the archive` and `bases 8 compiled, 20 from the archive` of its 28 (one new `pso_archive` file each); ŌKAMI HD 2 and 3 of 14. The count varies from start to start and was 0 in some headless runs.

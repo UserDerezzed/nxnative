@@ -224,11 +224,11 @@ int main(void) { @autoreleasepool {
     // A sparse mapping: a sparse texture's page table follows no note, so a storage note after a mapping made since the table was built builds it whole. One made before the
     // build no longer does: Ocarina of Time maps its virtual pool at boot, and every storage note after that built its texture table whole
     uint64_t vgen = g_stat_pool_vgen; builds = g_stat_pool_builds; ep = g_treg_ep;
-    atomic_fetch_add(&g_vp_gen, 1); ser_note(nvn_new_serial());
+    atomic_fetch_add(&g_vp_gen, 1); own_note(nvn_new_serial());
     table();
     CHECK(g_stat_pool_builds == builds + 1 && g_stat_pool_vgen == vgen + 1, "a storage note after a sparse mapping since the build builds the table whole");
     CHECK(g_treg_ep > ep, "and starts a new epoch of the texture ID cache");
-    builds = g_stat_pool_builds; ep = g_treg_ep; ser_note(nvn_new_serial());
+    builds = g_stat_pool_builds; ep = g_treg_ep; own_note(nvn_new_serial());
     id<MTLBuffer> b19 = table();
     CHECK(g_stat_pool_builds == builds && g_stat_pool_vgen == vgen + 1, "a storage note with no sparse mapping since the build builds nothing");
     CHECK(g_treg_ep == ep, "and keeps the texture ID cache's epoch");
