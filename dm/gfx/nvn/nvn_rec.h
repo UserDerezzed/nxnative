@@ -298,10 +298,12 @@ static rec_t *rec_put(uint32_t op, uint32_t nobj) {
     }
     rec_t *r = &g_rb_cur->r[g_rb_cur->n++]; r->op = op; r->nobj = nobj; return r;
 }
-// DM_NVN_REC_NODRAIN=1 (experiment): a submission's end only hands its records over (rec_publish) instead of waiting for the encode thread (rec_drain). The commit, its event signal and
-// every object a record uses are records themselves, in order, and whatever waits for the GPU or uses another queue still drains first (q_cb, the indirect-count event), so the replay can
-// translate the next submission while the encode thread encodes this one: in Ocarina of Time's Hyrule Field the end-of-submission drain (36 a frame) was 20% of the replay thread
-static int rec_nodrain(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_REC_NODRAIN"); on = e && atoi(e) > 0; if (on) MLOG("deferred encoding: submissions end without waiting for the encode thread (DM_NVN_REC_NODRAIN)"); } return on; }
+// A submission's end only hands its records over (rec_publish) instead of waiting for the encode thread (rec_drain): the replay translates the next submission while the encode
+// thread encodes this one. The commit, its event signal and every object a record uses are records themselves, in order, and whatever waits for the GPU or uses another queue still
+// drains first (q_cb, the indirect-count event); allocators, deferred releases and a deleted pool's buffers wait for fences, which only a made commit can complete. In Ocarina of
+// Time's Hyrule Field the end-of-submission drain (36 a frame) was 20% of the replay thread: at a 120 fps target on an M3 Max 71.1 -> 74.35 fps, and 80.1 -> 87.5 where the replay
+// thread was the limit; in Kokiri Forest at 60, 33 ms frames 12.4% -> 4.3% of all. DM_NVN_REC_NODRAIN=0 makes each submission's end wait again (rec_drain_soft), to compare
+static int rec_nodrain(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_REC_NODRAIN"); on = !(e && !strcmp(e, "0")); if (!on) MLOG("DM_NVN_REC_NODRAIN=0: each submission's end waits for the encode thread"); } return on; }
 // The submit thread, at a wait for work a hold keeps from the GPU: the hold ends first, with the game's signal
 static void hold_block(int any) {   // any: also with nothing held yet (the caller waits for what the game's signal follows, not for held work)
     if (!atomic_load(&g_hold_on) || (!any && !atomic_load(&g_hold_recs))) return;
