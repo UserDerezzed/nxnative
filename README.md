@@ -27,6 +27,10 @@
 > - [#2408](https://github.com/seedds/nxnative/pull/2408) a sparse mapping rebuilds the texture tables only when it is new: no 150 ms-1 s stalls at area loads in long sessions
 > - [#2341](https://github.com/seedds/nxnative/pull/2341) `replay_ahead`: a frame is translated before the game releases it (55-57 → 59.6-59.8 fps in its author's runs)
 > - [#2402](https://github.com/seedds/nxnative/pull/2402) and [#2367](https://github.com/seedds/nxnative/pull/2367) the frame step leaves 20 fps where 30 fits, also after a load's late frames
+> - [#2482](https://github.com/seedds/nxnative/pull/2482) finalized textures that registered IDs still read keep their texture views (about 310 of 330 views a frame in Kokiri Forest were made again)
+> - [#2458](https://github.com/seedds/nxnative/pull/2458) a submission's commit walks only the pages its GPU writes touched (25 commits a frame)
+> - [#2467](https://github.com/seedds/nxnative/pull/2467) a frame standing in the display link's queue is drained: no extra tick between the game's present and the screen
+> - [#2466](https://github.com/seedds/nxnative/pull/2466) 84 more task / mesh pipelines and 1,806 rows from 18 areas, the rows after its first-frame mark built in the background
 > - [#2418](https://github.com/seedds/nxnative/pull/2418) Anisotropic filtering, 2x to 16x, a launcher choice (the game's own by default)
 > - [#2433](https://github.com/seedds/nxnative/pull/2433) a loop exit's subgroup block stays in the iteration that left the loop (shader translator rebuilt for it)
 > - [#2328](https://github.com/seedds/nxnative/pull/2328), [#2329](https://github.com/seedds/nxnative/pull/2329), [#2330](https://github.com/seedds/nxnative/pull/2330), [#2342](https://github.com/seedds/nxnative/pull/2342) small fixes: a pool buffer's release fence, the blend-zero word of a merged pass, the pool table words before a mid-submission commit, one upload source buffer
