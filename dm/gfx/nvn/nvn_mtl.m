@@ -10319,7 +10319,19 @@ static int prepare_workers(void) {
     if (n <= 0) { size_t sz = sizeof n; if (sysctlbyname("hw.activecpu", &n, &sz, NULL, 0) || n < 2) n = 2; }
     return n;
 }
-static void warm_prepare(NSArray<WarmTask *> *tasks, long lines) {
+// The tasks in turn by vertex shader (one of each vertex shader's tasks, then the next of each): two compiles of one stage function never run at once (arch_fn_take, issue #815), so
+// tasks handed out in list order, where one vertex shader's pairs follow each other (Ocarina of Time's predicted pipelines: up to 996 of one vertex shader), held every other
+// worker at that function's slot: its 78,258-line list ran on about 2 of 18 cores, the compiler service at about 200% CPU. Within a vertex shader the order stays the list's
+static NSArray<WarmTask *> *warm_interleave(NSArray<WarmTask *> *tasks) {
+    NSMutableDictionary<NSString *, NSMutableArray<WarmTask *> *> *by = [NSMutableDictionary dictionary]; NSMutableArray<NSMutableArray<WarmTask *> *> *groups = [NSMutableArray array];
+    for (WarmTask *t in tasks) { NSString *k = t->vkey ?: t->key ?: @""; NSMutableArray *g = by[k]; if (!g) { g = [NSMutableArray array]; by[k] = g; [groups addObject:g]; } [g addObject:t]; }
+    if (groups.count == tasks.count) return tasks;
+    NSMutableArray<WarmTask *> *out = [NSMutableArray arrayWithCapacity:tasks.count];
+    for (NSUInteger round = 0; out.count < tasks.count; round++) for (NSMutableArray<WarmTask *> *g in groups) if (round < g.count) [out addObject:g[round]];
+    return out;
+}
+static void warm_prepare(NSArray<WarmTask *> *listed, long lines) {
+    const char *ie = getenv("DM_PSO_PREPARE_INTERLEAVE"); NSArray<WarmTask *> *tasks = ie && !strcmp(ie, "0") ? listed : warm_interleave(listed);
     int workers = prepare_workers(); long n = (long)tasks.count;
     uint64_t t0 = bp_now(), built0 = g_pb_built, arch0 = g_pb_archived, reused0 = g_pb_reused, spec0 = g_pb_spec;
     __block _Atomic long next = 0;

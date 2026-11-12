@@ -336,6 +336,7 @@ DM_PSO_PREBUILD_OUT	switch	`=<folder>`: the prebuild tool's bundle form (the NSP
 DM_PSO_PREBUILD_THREADS	switch	`=<n>`: the workers of the prebuild tool (`DM_PSO_PREBUILD=tool`; default: Metal's concurrent compiles, `maximumConcurrentCompilationTaskCount`)
 DM_PSO_PREBUILD_WARM	switch	`0`: the prebuild tool (`DM_PSO_PREBUILD=tool`) builds the pairs' bases alone and leaves the prewarm lists' pipelines to the first start
 DM_PSO_PREPARE	switch	`0` runs the prewarm in the background while the game starts, as without a window; `1` makes the first submission wait for the prewarm lists also without a window
+DM_PSO_PREPARE_INTERLEAVE	switch	`0` hands the prepare step its prewarm list's tasks in list order, as before; by default they go out in turn by vertex shader, so that two workers rarely compile pipelines of one stage function at once (which `arch_fn_take` keeps apart, issue #815)
 DM_PSO_PREPARE_THREADS	switch	`=<n>`: the workers of the prepare step that builds the prewarm lists before the first frame (default: the device's active cores)
 DM_PSO_PULL_ALL	diagnostic	`=1`: every draw that has a pulling pipeline draws with it, never with the pipeline for its vertex layout
 DM_PSO_RECORD	path	`=<file>`: appends the shaders and pipelines used in the run to that file, for re-recording the prewarm manifest
