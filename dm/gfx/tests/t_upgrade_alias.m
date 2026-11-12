@@ -7,6 +7,8 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int checks, failed;
 #define CHECK(c, label) do { checks++; if (!(c)) { failed++; fprintf(stderr, "FAIL: %s\n", label); } } while (0)
+static int keeps(id o) { pthread_mutex_lock(&g_smu); int r = own_keeps_locked(o); pthread_mutex_unlock(&g_smu); return r; }   // shared or pinned (nvn_owner.m)
+static uint64_t ghost_puts(void) { pthread_mutex_lock(&g_smu); uint64_t n = own_stats_locked().ghost_puts; pthread_mutex_unlock(&g_smu); return n; }
 int main(void) { @autoreleasepool {
     mtl_init(); mtl_sub_begin();
     tex_t a = {.magic=MAGIC('T','E','X',0), .serial=99301};
@@ -81,11 +83,11 @@ int main(void) { @autoreleasepool {
     mtl_tex_init(&rep);
     uint64_t nopatch_before = g_stat_pool_nopatch[3];
     id<MTLTexture> rep_tex = tex_mtl(&rep);
-    CHECK(rep_tex != nil && rep_tex != r1_tex && !alias_has(r1_tex) && alias_has(rep_tex), "new texture takes over storage from the retired one");
+    CHECK(rep_tex != nil && rep_tex != r1_tex && !keeps(r1_tex) && keeps(rep_tex), "new texture takes over storage from the retired one");
     os_unfair_lock_lock(&g_rmu);
     uint64_t gpu1 = pool_gpu(0, MTLTextureType2D, NVN_DPF_FLOAT, 0, &pbuf);
     CHECK(gpu1 != 0 && g_stat_pool_nopatch[3] == nopatch_before, "storage takeover patches the bindless pool without an un-noted rebuild");
-    CHECK(tex_by_id(952) == nil && g_treg[952].gone && alias_has(rep_tex), "un-ghosted retired descriptor over taken storage marks gone and does not evict the replacement");
+    CHECK(tex_by_id(952) == nil && g_treg[952].gone && keeps(rep_tex), "un-ghosted retired descriptor over taken storage marks gone and does not evict the replacement");
     os_unfair_lock_unlock(&g_rmu);
     mtl_tex_release(&rep); mtl_alias_drop_pool(&tpool); mtl_pool_del(mem_buf);
     // A dynamic-resolution COMPRESSIBLE family in a VIRTUAL pool keeps its placement heap across Finalize and resolves retired aliases after ghost eviction.
@@ -117,13 +119,13 @@ int main(void) { @autoreleasepool {
     treg_finish_submission(); g_sub_serial++;
     os_unfair_lock_lock(&g_rmu);
     pool_gpu(0, MTLTextureType2D, NVN_DPF_FLOAT, 0, &pbuf);
-    uint64_t builds_after_first = g_stat_pool_builds, ghost_puts_after_first = g_ghost_puts;
+    uint64_t builds_after_first = g_stat_pool_builds, ghost_puts_after_first = ghost_puts();
     CHECK(g_treg[2100].view != NULL && tex_by_id(2100) == vt0, "retired descriptor in a large pool resolves in pool_gpu");
     os_unfair_lock_unlock(&g_rmu);
     treg_finish_submission(); g_sub_serial++;
     os_unfair_lock_lock(&g_rmu);
     pool_gpu(0, MTLTextureType2D, NVN_DPF_FLOAT, 0, &pbuf);
-    CHECK(g_treg[2100].view != NULL && g_stat_pool_builds == builds_after_first && g_ghost_puts == ghost_puts_after_first, "subsequent submission keeps the cached view and pool table without a full rebuild or ghost thrash");
+    CHECK(g_treg[2100].view != NULL && g_stat_pool_builds == builds_after_first && ghost_puts() == ghost_puts_after_first, "subsequent submission keeps the cached view and pool table without a full rebuild or ghost thrash");
     os_unfair_lock_unlock(&g_rmu);
     mtl_alias_drop_pool(&vpool); mtl_pool_del(mem_buf);
     mtl_sub_commit(); mtl_drain();
