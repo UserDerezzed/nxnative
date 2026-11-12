@@ -1,7 +1,7 @@
 # nxnative
 
 > [!NOTE]
-> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`084f5aa5`](https://github.com/seedds/nxnative/commit/084f5aa5)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
+> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`bcc4483d`](https://github.com/seedds/nxnative/commit/bcc4483d)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
 >
 > **Ocarina of Time: performance and graphics**
 > - [#1393](https://github.com/seedds/nxnative/pull/1393) `pool_skip_retired`: no out-of-GPU-memory at scene changes
@@ -22,9 +22,15 @@
 > - [#2308](https://github.com/seedds/nxnative/pull/2308) large mesh stage memory in a device slice: the foliage mesh pass faster
 > - [#2307](https://github.com/seedds/nxnative/pull/2307) native mesh pipelines built before their first draw (`DM_NVN_MESH_PREDICT`): fewer mid-play stalls
 > - [#2306](https://github.com/seedds/nxnative/pull/2306) large depth textures zeroed by copies, not a clear pass (Metal 4 clear pass out of memory on an M3 Pro)
-> - [#2263](https://github.com/seedds/nxnative/pull/2263) partial texture re-uploads: no stutter walking into Castle Town
 > - [#2260](https://github.com/seedds/nxnative/pull/2260) texture views cached by Metal texture, and the encode thread on for the game
-> - [#2280](https://github.com/seedds/nxnative/pull/2280) 15 more task / mesh pipelines in the prewarm list
+> - [#2280](https://github.com/seedds/nxnative/pull/2280) 15 more task / mesh pipelines in the prewarm list, [#2324](https://github.com/seedds/nxnative/pull/2324) 171 more
+> - [#2344](https://github.com/seedds/nxnative/pull/2344) area loads late in a session no longer freeze in runs of 200-670 ms frames (texture IDs' read marks go with an unread ID's next texture)
+> - [#2408](https://github.com/seedds/nxnative/pull/2408) a sparse mapping rebuilds the texture tables only when it is new: no 150 ms-1 s stalls at area loads in long sessions
+> - [#2389](https://github.com/seedds/nxnative/pull/2389) finalized textures in use stay in their table and a pool table lists up to 8,192 retired views: no 100-490 ms frames at streamed transitions (its idle-aware table kept at #1731's size of 32,768)
+> - [#2341](https://github.com/seedds/nxnative/pull/2341) `replay_ahead`: a frame is translated before the game releases it (55-57 → 59.6-59.8 fps in its author's runs)
+> - [#2402](https://github.com/seedds/nxnative/pull/2402) and [#2367](https://github.com/seedds/nxnative/pull/2367) the frame step leaves 20 fps where 30 fits, also after a load's late frames
+> - [#2334](https://github.com/seedds/nxnative/pull/2334) `draw_barriers game` works again with the dynamic resolution's image heaps
+> - [#2328](https://github.com/seedds/nxnative/pull/2328), [#2329](https://github.com/seedds/nxnative/pull/2329), [#2330](https://github.com/seedds/nxnative/pull/2330), [#2342](https://github.com/seedds/nxnative/pull/2342) small fixes: a pool buffer's release fence, the blend-zero word of a merged pass, the pool table words before a mid-submission commit, one upload source buffer
 >
 > **Ocarina of Time: cheats** (in the game window's cheat panel)
 > - [#1718](https://github.com/seedds/nxnative/pull/1718) rupees and ammo, max hearts, Link speed ×1.5–×3, one-hit kill, no damage
@@ -38,7 +44,7 @@
 > - [#1176](https://github.com/seedds/nxnative/pull/1176) HDR output
 >
 > **Building and diagnostics**
-> - [#366](https://github.com/seedds/nxnative/pull/366), [#1693](https://github.com/seedds/nxnative/pull/1693), [#2255](https://github.com/seedds/nxnative/pull/2255) faster shader builds (2255: worker processes); [#2193](https://github.com/seedds/nxnative/pull/2193) the pipeline prebuild also builds the prewarm lists; [#1463](https://github.com/seedds/nxnative/pull/1463) the shader split no longer hangs at 88 %; [#1691](https://github.com/seedds/nxnative/pull/1691) progress through the archive stages' silent tails
+> - [#366](https://github.com/seedds/nxnative/pull/366), [#1693](https://github.com/seedds/nxnative/pull/1693) faster shader builds (main has PR 2255's worker processes, which supersede 1693's batch queueing); [#2193](https://github.com/seedds/nxnative/pull/2193) the pipeline prebuild also builds the prewarm lists; [#1463](https://github.com/seedds/nxnative/pull/1463) the shader split no longer hangs at 88 %; [#1691](https://github.com/seedds/nxnative/pull/1691) progress through the archive stages' silent tails
 > - [#1720](https://github.com/seedds/nxnative/pull/1720) dropped task / mesh draws are reported; [#1751](https://github.com/seedds/nxnative/pull/1751) `DM_NVN_GPUPROF_GEOM` splits pass time into geometry and pixels
 >
 > The shader chain header is regenerated for the merged translator, so build from this branch as a whole rather than cherry-picking single PRs out of it.
