@@ -13,6 +13,7 @@
 > - [#1824](https://github.com/seedds/nxnative/pull/1824) texel fetches clamped at the texture edge: no hard edge in the mist
 > - [#1890](https://github.com/seedds/nxnative/pull/1890) experimental opt-in fractional timing for high-fps play
 > - [#1468](https://github.com/seedds/nxnative/pull/1468) a long render pass starts on the GPU while it is still encoded (`DM_NVN_PASS_SPLIT`)
+> - a submission's end hands its records to the encode thread instead of waiting for it (`DM_NVN_REC_NODRAIN=0` waits again): Hyrule Field at a 120 fps target 71.1 → 74.4 fps, Kokiri Forest's 33 ms frames at 60 12.4% → 4.3% on an M3 Max
 > - the main submission keeps up to 16 command allocators (was 8): the encode thread no longer waits for one about 5 times a frame (Hyrule Field at a 120 fps target 67.1 → 69.8 fps on an M3 Max)
 > - [#1927](https://github.com/seedds/nxnative/pull/1927) `fps_hold` off: a late frame is shown late instead of held a second vsync
 > - [#1942](https://github.com/seedds/nxnative/pull/1942) frame step does not step up on late frames with the GPU idle
