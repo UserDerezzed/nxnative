@@ -29,6 +29,8 @@
 > - [#2389](https://github.com/seedds/nxnative/pull/2389) finalized textures in use stay in their table and a pool table lists up to 8,192 retired views: no 100-490 ms frames at streamed transitions (its idle-aware queue kept at #1731's size of 32,768)
 > - [#2341](https://github.com/seedds/nxnative/pull/2341) `replay_ahead`: a frame is translated before the game releases it (55-57 → 59.6-59.8 fps in its author's runs)
 > - [#2402](https://github.com/seedds/nxnative/pull/2402) and [#2367](https://github.com/seedds/nxnative/pull/2367) the frame step leaves 20 fps where 30 fits, also after a load's late frames
+> - [#2418](https://github.com/seedds/nxnative/pull/2418) Anisotropic filtering, 2x to 16x, a launcher choice (the game's own by default)
+> - [#2433](https://github.com/seedds/nxnative/pull/2433) a loop exit's subgroup block stays in the iteration that left the loop (shader translator rebuilt for it)
 > - [#2328](https://github.com/seedds/nxnative/pull/2328), [#2329](https://github.com/seedds/nxnative/pull/2329), [#2330](https://github.com/seedds/nxnative/pull/2330), [#2342](https://github.com/seedds/nxnative/pull/2342) small fixes: a pool buffer's release fence, the blend-zero word of a merged pass, the pool table words before a mid-submission commit, one upload source buffer
 >
 > **Ocarina of Time: cheats** (in the game window's cheat panel)
@@ -41,9 +43,11 @@
 > **Switch 2 controllers and output**
 > - [#2129](https://github.com/seedds/nxnative/pull/2129) a Controller menu and panel in the game window (⌘⇧P) test a stick's drift and save its calibration in the controller, Pro Controller 2 right stick included
 > - [#1176](https://github.com/seedds/nxnative/pull/1176) HDR output
+> - [#2422](https://github.com/seedds/nxnative/pull/2422) a low-latency Bluetooth link and a queue of their own: about 66 reports a second instead of 33 (the Controller panel's hooks run on the main queue)
 >
 > **Building and diagnostics**
 > - [#366](https://github.com/seedds/nxnative/pull/366), [#1693](https://github.com/seedds/nxnative/pull/1693) faster shader builds (main has PR 2255's worker processes, which supersede 1693's batch queueing); [#2193](https://github.com/seedds/nxnative/pull/2193) the pipeline prebuild also builds the prewarm lists; [#1463](https://github.com/seedds/nxnative/pull/1463) the shader split no longer hangs at 88 %; [#1691](https://github.com/seedds/nxnative/pull/1691) progress through the archive stages' silent tails
+> - [#2432](https://github.com/seedds/nxnative/pull/2432) `shader_lib.py compress`: a shader library image stores its files compressed, about a third of the size
 > - [#1720](https://github.com/seedds/nxnative/pull/1720) dropped task / mesh draws are reported; [#1751](https://github.com/seedds/nxnative/pull/1751) `DM_NVN_GPUPROF_GEOM` splits pass time into geometry and pixels
 >
 > The shader chain header is regenerated for the merged translator, so build from this branch as a whole rather than cherry-picking single PRs out of it.
