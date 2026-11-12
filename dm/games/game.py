@@ -194,6 +194,9 @@ def header_one(g):
     if g.get('render_cond', ''): print(f'{g.id}: render_cond is ignored: the host evaluates NVN conditional rendering for every game', file=sys.stderr)   # a profile written before the key went (a build folder's derived one)
     psr = g.get('pool_skip_retired', 'off')   # pool tables give a retired texture ID without a view the dummy instead of a texture made again (nvn_mtl.m pool_gpu; DM_NVN_POOL_SKIP_RETIRED overrides): on / off
     if psr not in ('on', 'off'): sys.exit(f'{g.id}: pool_skip_retired must be on or off: {psr}')
+    rah = g.get('replay_ahead', 'off')   # a queue parked on an event the game's CPU signals is translated meanwhile, its commits held until the signal (nvn_queue.inc nq_worker, nvn_rec.h hold_*; DM_NVN_REPLAY_AHEAD overrides; needs enc_thread): on / off
+    if rah not in ('on', 'off'): sys.exit(f'{g.id}: replay_ahead must be on or off: {rah}')
+    if rah == 'on' and et != 'on': sys.exit(f'{g.id}: replay_ahead needs enc_thread on (the encode thread holds the commits)')
     tfu = g.get('tex_flush_upload', 'off')   # textures written by the CPU into a pool and published with nvnMemoryPoolFlushMappedRange are uploaded like packaged ones (hle_nvn.c): on / off
     if tfu not in ('on', 'off'): sys.exit(f'{g.id}: tex_flush_upload must be on or off: {tfu}')
     tdu = g.get('tex_dirty_upload', 'off')   # with tex_flush_upload: a registered texture the CPU writes after init without any flush is uploaded too (dirty pages, hle_nvn.c nvn_ft_written): on / off
@@ -260,6 +263,7 @@ def header_one(g):
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
          f'#define DM_GAME_SHADER_KEY_SKIP_OFF {sko:#x}', f'#define DM_GAME_SHADER_KEY_SKIP_LEN {skl:#x}',
          f'#define DM_GAME_POOL_SKIP_RETIRED {int(psr == "on")}',
+         f'#define DM_GAME_REPLAY_AHEAD {int(rah == "on")}',
          f'#define DM_GAME_TEX_DIRTY_UPLOAD {int(tdu == "on")}',
          f'#define DM_GAME_TEX_DYN_SLOTS {int(tds == "on")}',
          f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
