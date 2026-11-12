@@ -1,13 +1,13 @@
 # nxnative
 
 > [!NOTE]
-> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`bcc4483d`](https://github.com/seedds/nxnative/commit/bcc4483d)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
+> **This is the `oot-stack` branch of [UserDerezzed/nxnative](https://github.com/UserDerezzed/nxnative), not upstream.** It is [seedds/nxnative](https://github.com/seedds/nxnative) `main` (at [`f4b7e77c`](https://github.com/seedds/nxnative/commit/f4b7e77c)) with open community pull requests merged on top, mostly for The Legend of Zelda: Ocarina of Time on the Mac. None of these PRs is merged upstream yet, so expect rough edges; report problems with them on their PR, not as upstream issues. Everything below this note is upstream's README.
 >
 > **Ocarina of Time: performance and graphics**
 > - [#1393](https://github.com/seedds/nxnative/pull/1393) `pool_skip_retired`: no out-of-GPU-memory at scene changes
 > - [#1714](https://github.com/seedds/nxnative/pull/1714) `gpu_ts_hz`: wind and leaves move at the right speed (were 19.66× too fast)
 > - [#1730](https://github.com/seedds/nxnative/pull/1730) contiguous gmem pool-run merging only (its archive hardening is superseded by main's PR 1735)
-> - [#1731](https://github.com/seedds/nxnative/pull/1731) texture upgrades, BC render targets and retired descriptor bounds kept (adapted to main's copy absorption, PR 1310)
+> - [#1731](https://github.com/seedds/nxnative/pull/1731) texture upgrades, BC render targets and retired descriptor bounds kept (adapted to main's copy absorption, PR 1310); with #2312 and #2389, ported onto main's NVN resource owner (`dm/gfx/nvn/nvn_owner.m`)
 > - [#1732](https://github.com/seedds/nxnative/pull/1732) updated prewarm manifest and shader list
 > - [#1752](https://github.com/seedds/nxnative/pull/1752) raw global memory loads resolve their pool once (shader translator rebuilt and re-locked for it)
 > - [#1824](https://github.com/seedds/nxnative/pull/1824) texel fetches clamped at the texture edge: no hard edge in the mist
@@ -26,10 +26,9 @@
 > - [#2280](https://github.com/seedds/nxnative/pull/2280) 15 more task / mesh pipelines in the prewarm list, [#2324](https://github.com/seedds/nxnative/pull/2324) 171 more
 > - [#2344](https://github.com/seedds/nxnative/pull/2344) area loads late in a session no longer freeze in runs of 200-670 ms frames (texture IDs' read marks go with an unread ID's next texture)
 > - [#2408](https://github.com/seedds/nxnative/pull/2408) a sparse mapping rebuilds the texture tables only when it is new: no 150 ms-1 s stalls at area loads in long sessions
-> - [#2389](https://github.com/seedds/nxnative/pull/2389) finalized textures in use stay in their table and a pool table lists up to 8,192 retired views: no 100-490 ms frames at streamed transitions (its idle-aware table kept at #1731's size of 32,768)
+> - [#2389](https://github.com/seedds/nxnative/pull/2389) finalized textures in use stay in their table and a pool table lists up to 8,192 retired views: no 100-490 ms frames at streamed transitions (its idle-aware queue kept at #1731's size of 32,768)
 > - [#2341](https://github.com/seedds/nxnative/pull/2341) `replay_ahead`: a frame is translated before the game releases it (55-57 → 59.6-59.8 fps in its author's runs)
 > - [#2402](https://github.com/seedds/nxnative/pull/2402) and [#2367](https://github.com/seedds/nxnative/pull/2367) the frame step leaves 20 fps where 30 fits, also after a load's late frames
-> - [#2334](https://github.com/seedds/nxnative/pull/2334) `draw_barriers game` works again with the dynamic resolution's image heaps
 > - [#2328](https://github.com/seedds/nxnative/pull/2328), [#2329](https://github.com/seedds/nxnative/pull/2329), [#2330](https://github.com/seedds/nxnative/pull/2330), [#2342](https://github.com/seedds/nxnative/pull/2342) small fixes: a pool buffer's release fence, the blend-zero word of a merged pass, the pool table words before a mid-submission commit, one upload source buffer
 >
 > **Ocarina of Time: cheats** (in the game window's cheat panel)
