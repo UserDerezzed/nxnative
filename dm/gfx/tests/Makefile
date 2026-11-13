@@ -318,11 +318,12 @@ check_t_direct_upload: t_direct_upload
 	DM_TEST_UP_LOST=13 MTL_DEBUG_LAYER=1 ./t_direct_upload
 t_geometry_hazards: t_geometry_hazards.m t_geometry.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_geometry_hazards.m $(MTL_T_SRC) $(FW)
+# DM_NVN_CUT_FIRST=0 here and in check_t_feedback (oot-stack): their boundary checks test the busy rule that PR 2526's first-segment commit (on by default) bypasses
 .PHONY: check_t_geometry_hazards
 check_t_geometry_hazards: t_geometry_hazards
-	DM_NVN_CUT=1 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
-	DM_NVN_CUT=0 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
-	DM_NVN_CUT=1 DM_NVN_GEOMETRY_CUT=0 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
+	DM_NVN_CUT_FIRST=0 DM_NVN_CUT=1 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
+	DM_NVN_CUT_FIRST=0 DM_NVN_CUT=0 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
+	DM_NVN_CUT_FIRST=0 DM_NVN_CUT=1 DM_NVN_GEOMETRY_CUT=0 MTL_DEBUG_LAYER=1 ./t_geometry_hazards
 t_geometry_feedback: t_geometry_feedback.m t_geometry.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_geometry_feedback.m $(MTL_T_SRC) $(FW)
 check_t_geometry_feedback: RUN_ENV = MTL_DEBUG_LAYER=1
@@ -336,7 +337,7 @@ check_t_geometry_mesh: t_geometry_mesh
 	@set -e; work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; python3 test_dmsh_geometry.py --fixture "$$work"; MTL_DEBUG_LAYER=1 ./t_geometry_mesh "$$work"; DM_NVN_GEO_MESH_RUN=0 MTL_DEBUG_LAYER=1 ./t_geometry_mesh "$$work"; DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_geometry_mesh "$$work"
 .PHONY: check_t_feedback
 check_t_feedback: t_feedback
-	@set -e; work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; python3 test_dmsh_fetch.py --fixture "$$work"; MTL_DEBUG_LAYER=1 ./t_feedback "$$work"
+	@set -e; work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; python3 test_dmsh_fetch.py --fixture "$$work"; DM_NVN_CUT_FIRST=0 MTL_DEBUG_LAYER=1 ./t_feedback "$$work"
 t_mip_extent: t_mip_extent.m ../nvn/hle_nvn.c ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_mip_extent.m ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 .PHONY: check_t_mip_extent

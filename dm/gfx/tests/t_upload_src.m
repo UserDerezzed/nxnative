@@ -65,7 +65,9 @@ int main(void) { @autoreleasepool {
     for (int i = 0; i < 8; i++) make(&small[i], mem, &pool, (size_t)i << 20, 256, 128 + 16 * i, i);
     upload_all(small, 8, &made, &batches);
     printf("small: %llu source buffers for 8 textures, %u batches\n", (unsigned long long)made, batches);
-    CHECK("one zero-copy source buffer per texture in one batch", made == 8 && batches == 1);
+    // On the oot-stack, PR 1731's up_big_src makes a source buffer over the 8 MB window around the pages and returns one the open batch keeps (g_up_keep) when it covers them:
+    // these eight textures lie in the pool's first 8 MB, so they share one buffer (main makes one per texture)
+    CHECK("one zero-copy source buffer for the textures of one 8 MB window in one batch (PR 1731)", made == 1 && batches == 1);
 
     upl big[3];   // 64 MB each: the third's staging no longer fits the batch's 128 MB, so taking it flushes the batch
     for (int i = 0; i < 3; i++) make(&big[i], mem, &pool, (size_t)(16 + 72 * i) << 20, 4096, 4096, 100 + i);
