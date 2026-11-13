@@ -159,9 +159,9 @@ DM_NVN_CPUPROF	diagnostic	1 records CPU wall/time/instruction totals by renderer
 DM_NVN_CSH_PRESCAN	diagnostic	`0` runs the compute-hoist scan at every pass's first draw even when no dispatch follows (as before; for timing)
 DM_NVN_CS_HOIST	switch	`0` makes a compute dispatch between the draws of a pass end it (on by default: the dispatch runs ahead of the pass when that changes nothing the draws before it read)
 DM_NVN_CUT	switch	`=<draws>`: the replay commits its command buffer every that many draws, between passes (default 64; `0` one command buffer per submission, except the cut after a buffer-to-texture copy)
+DM_NVN_CUT_BUSY	switch	`=0`: a segment boundary commits whatever the GPU is doing (the default commits only when earlier work has reported back, keeping the boundary's GPU timestamp otherwise)
 DM_NVN_CUT_FIRST	switch	`0` turns off the early first segment: on by default a submission's first segment is cut after `DM_NVN_CUT_FIRST_N` draws (8) and committed even while earlier segments run, so a frame's first work reaches the GPU before the previous frame's runs out (Ocarina of Time on an M1: -0.85 ms a frame)
 DM_NVN_CUT_FIRST_N	diagnostic	`=<draws>`: the size of `DM_NVN_CUT_FIRST`'s first segment (default 8)
-DM_NVN_CUT_BUSY	switch	`=0`: a segment boundary commits whatever the GPU is doing (the default commits only when earlier work has reported back, keeping the boundary's GPU timestamp otherwise)
 DM_NVN_DEFER	switch	`0` turns off the deferred pass merging of the TBDR optimizations (which run only with `DM_NVN_TBDR=1`)
 DM_NVN_DEFER_AB	diagnostic	`=1` keeps the deferred pass merging (with `DM_NVN_TBDR=1`) off until the second screenshot has been written, then turns it on, to compare the pictures with and without it
 DM_NVN_DEPTHOVR	diagnostic	`=<fragment shader key prefix>,…`: those draws compare depth with `ALWAYS`; with `DM_NVN_HILITE`, tells "the depth test rejects every fragment" from "nothing rasterizes"
@@ -276,12 +276,12 @@ DM_NVN_VCONV_CPU	switch	`=1` converts integer vertex inputs fed formats of anoth
 DM_NVN_VCONV_KEEP	switch	`=0` turns off the kept vertex conversions (`vk_get`); `=<n>` sets the smallest range kept, in vertices (default 4096, which `=1` also gives)
 DM_NVN_VCONV_RANGE	switch	`0` / `1` overrides the profile's `vconv_range`: CPU vertex conversion only over the vertices each draw reads instead of the whole bound range
 DM_NVN_VC_KEEP	switch	`1` (default) keeps the texture-view set of a finalized texture that a registered ID still resolves through the ghost table, until the owner lets the serial go (vc_ghost_sweep, once a frame); `0` refuses such sets, so each submission that reads the ID makes its view again; `ab` alternates it with the DM_AB phases
+DM_NVN_VIS_HEAPFRAME	switch	`0` puts the image-heap alias flush back on every barrier; on by default it is at each submission's first barrier and after encoders that may have written memory (a resolution family changes size between frames): Ocarina of Time on an M1 -1.3 ms a frame, its GPU stages overlapping again
 DM_NVN_VLOG	diagnostic	Set: logs each NVN memory pool as it is created (address, memory, size, flags) with a backtrace
 DM_NVN_VSDUMP	path	Output file for post-vertex captures; used with DM_NVN_VSDUMP_KEY and the frame/count bounds
 DM_NVN_VSDUMP_FROM	diagnostic	First presented frame eligible for a post-vertex capture (default 0)
 DM_NVN_VSDUMP_KEY	diagnostic	Vertex key to capture, or `*` for all eligible vertex shaders; storage-writing shaders are excluded
 DM_NVN_VSDUMP_MAX	diagnostic	Maximum post-vertex captures (default 1, or 256 for the wildcard key)
-DM_NVN_VIS_HEAPFRAME	switch	`0` puts the image-heap alias flush back on every barrier; on by default it is at each submission's first barrier and after encoders that may have written memory (a resolution family changes size between frames): Ocarina of Time on an M1 -1.3 ms a frame, its GPU stages overlapping again
 DM_NVN_WAITS	diagnostic	`=1` turns on the wait ledger: every place a host or game thread waits on the CPU for the GPU or the encode thread, counted per frame
 DM_NVN_XV	switch	`0` turns off the cross-submission attachment validity ledger, which skips write-backs of colour attachments cleared before their next use (on by default, only with `DM_NVN_TBDR` on)
 DM_NVN_ZBLOCK	diagnostic	`=1` logs (`[zb]`) the all-zero blocks per level of each ASTC texture uploaded on the CPU (magenta when drawn); `=<folder>` also writes the raw storage of the first one per format and size
