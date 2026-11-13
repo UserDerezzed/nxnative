@@ -32,6 +32,13 @@
 > - [#2466](https://github.com/seedds/nxnative/pull/2466) 84 more task / mesh pipelines and 1,806 rows from 18 areas, the rows after its first-frame mark built in the background
 > - [#2418](https://github.com/seedds/nxnative/pull/2418) Anisotropic filtering, 2x to 16x, a launcher choice (the game's own by default)
 > - [#2433](https://github.com/seedds/nxnative/pull/2433) a loop exit's subgroup block stays in the iteration that left the loop (shader translator rebuilt for it)
+> - [#2526](https://github.com/seedds/nxnative/pull/2526) a submission's first 8 draws are committed while the previous frame's last work still runs: no GPU idle at the frame boundary (−0.85 ms a frame on an M1; `DM_NVN_CUT_FIRST=0` off)
+> - [#2525](https://github.com/seedds/nxnative/pull/2525) an image heap's alias flush once a submission and after memory writes, not on every barrier (−1.3 ms a frame on an M1; `DM_NVN_VIS_HEAPFRAME=0` off)
+> - [#2544](https://github.com/seedds/nxnative/pull/2544), [#2545](https://github.com/seedds/nxnative/pull/2545) submit-thread savings: same-pass feedback reads serials without the registry lock, the queue worker keeps its thread port
+> - [#2518](https://github.com/seedds/nxnative/pull/2518), [#2531](https://github.com/seedds/nxnative/pull/2531), [#2550](https://github.com/seedds/nxnative/pull/2550) prewarm rows from long M4 Max and M5 Pro sessions (the Great Deku Tree, Hyrule Field, Lake Hylia, Castle Town): 148 more task / mesh pipelines before the first frame, 4,202 rows after it
+> - [#2539](https://github.com/seedds/nxnative/pull/2539) pipeline archive files Metal refuses after a macOS update are removed, so the prebuild runs again (no 1-2 s freezes at first draws after an update)
+> - [#2516](https://github.com/seedds/nxnative/pull/2516) a staged texture upload whose batch was flushed never reads the flushed batch's source buffer
+> - [#2497](https://github.com/seedds/nxnative/pull/2497) a full model heap no longer crashes the model rebuild (`DM_HEAP_RETRY=0` as shipped)
 > - [#2328](https://github.com/seedds/nxnative/pull/2328), [#2329](https://github.com/seedds/nxnative/pull/2329), [#2330](https://github.com/seedds/nxnative/pull/2330) small fixes: a pool buffer's release fence, the blend-zero word of a merged pass and the pool table words before a mid-submission commit
 >
 > **Ocarina of Time: cheats** (in the game window's cheat panel)
