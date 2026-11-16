@@ -1,6 +1,6 @@
 # The Legend of Zelda: Ocarina of Time (0400486024DEC000): the rewriter's patches of this game's own code. dm/tools/patch_nso.py loads every profile's patches.py;
 # MATCH_FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
-from nso_asm import ADRP, B
+from nso_asm import ADRP, B, LDP_POST, LDRX, STP_PRE, STRX
 
 # The game's frame ratio. Once a frame the function at main+0x6e6be0 (v131072) divides its base rate (60.0, or 30.0 while bit 0 of [x21+0x24f] is set) by the int frame rate at
 # [x21+0x2c8] (fdiv s8,s1,s0 at +0xe4) and hands the result to the time object (main+0x3b4e300: ratio at +0x10, 1 / ratio at +0x14, round(60 / ratio) at +0x1c), which the game
@@ -30,10 +30,63 @@ def real_speed(ctx):
     ctx.put(0x6e6cc4, [B(0x6e6cc4, start)], 'EXPERIMENT: fractional simulation step without modifying native rendering budget')
 
 
+# The fluid simulation's updates (the water's ripples: the compute program eularian_fluid_simulation, a 256x256 height and velocity grid that follows the player; main+0x472e0 on
+# v131072). Once a frame its draw takes the frame's step (the time object's ratio, or a category's own at +0x20 + n * 0x30) as a whole number (fcvtzs w9, s0 at +0x318) and runs that
+# many updates times the parameter at +0x4c (6 dispatches each: the stamps with the grid's scroll, then five steps). The console's steps are whole (1 at 60 fps, 2 at 30), so
+# nothing is lost there. A step under 1 (the fractional step at a 120 fps target: 0.5, or the frame's own time up to 1) gave no update at all: the grid froze as it was, and since
+# the scroll is part of an update, every move of the grid's origin (a whole metre, with the player) carried the frozen ripples to another patch of water (rings that stand still,
+# then jump). 24 reads of the height texture over 29 s at a 120 target were byte-identical while the origin moved 8 times; at 60 all 24 differed and the contents followed.
+# The stub leaves a step of 1 or more as the game takes it (whatever it carried stays) and adds a step under 1 to a part it carries, in 1/65536: an update when that reaches 1,
+# so 0.5 updates every other frame and any step keeps the simulation at its 60 updates a second. The scroll the game hands an update is the origin's move of that frame alone
+# (with updates every other frame at an exact 0.5, the two moves that could be read both left the ripples behind), so a frame whose origin (the object's two words at +0xab0,
+# in metres; read in play on v131072) is not the one of the frame before updates at once and takes that update from the part, which may go below 0: the next update due is
+# the one it ran. Reading the scroll from the uniform buffer the draw binds instead (its first two floats) missed moves at an exact 0.5 and is not used.
+# One part and one origin per instance (the draw's x23, an entry of 0x8b8 bytes of the array at x21 +0x28: its offset >> 11 names one of 4 cells at state +0x188 and +0x1a8),
+# so two instances drawn in a frame do not take each other's half or hide each other's move. A negative step or a NaN gives the game's own result. x16 and x17 appear
+# nowhere in the function; x9 is the instruction's own result; x10 and x11 are kept on the stack; x21 and x23 are set at +0x38 and +0x78 and not written before the site;
+# the flags are set again (cmp w8, #1 at +0x334) before anything reads them
+def fluid_steps(ctx):
+    base = (getattr(ctx, 'others', None) or {}).get('fluid simulation')
+    if base is None: return   # not found in this build (a red line from the locator): the game's own count
+    site = base + 0x318; back = site + 4
+    ctx.site(site, '0900381e')   # fcvtzs w9, s0
+    here, emit = ctx.here, ctx.emit
+    start = here(); done = start + 22 * 4         # the stub's end: x10 and x11 back, then the branch back (a cbnz or tbnz does not reach the site from the patch area)
+    emit(STP_PRE(10, 11, 31, -16))                # stp x10, x11, [sp, #-16]!
+    emit(ADRP(16, here(), ctx.state))
+    emit(LDRX(9, 21, 5))                          # ldr x9, [x21, #0x28]      the instances
+    for w in (0xcb0902e9,                         # sub x9, x23, x9           this one's offset
+              0xd34b3129,                         # ubfx x9, x9, #11, #2      one of 4 cells
+              0x8b090e10):                        # add x16, x16, x9, lsl #3
+        emit(w)
+    emit(LDRX(10, 21, 0xab0 // 8))                # ldr x10, [x21, #0xab0]    the grid's origin
+    emit(LDRX(11, 16, 0x1a8 // 8))                # ldr x11, [x16, #0x1a8]    the origin of the frame before
+    emit(STRX(10, 16, 0x1a8 // 8))                # str x10, [x16, #0x1a8]
+    emit(0xca0b014a)                              # eor x10, x10, x11         not 0: the grid moved in this frame
+    emit(0x1e380009)                              # fcvtzs w9, s0             the game's count
+    emit(0x35000009 | ((done - here()) // 4 & 0x7ffff) << 5)   # cbnz w9, done: a whole step or more (or a negative one): as the game
+    emit(0x1e18c011)                              # fcvtzs w17, s0, #16       the step in 1/65536
+    emit(0x37f80011 | ((done - here()) // 4 & 0x3fff) << 5)   # tbnz w17, #31, done: nothing is taken back (w9 is 0)
+    for w in (0xb9418a0b,                         # ldr w11, [x16, #0x188]    the part carried
+              0x0b11016b,                         # add w11, w11, w17
+              0x7140417f,                         # cmp w11, #0x10, lsl #12   a whole step?
+              0xfa40b940,                         # ccmp x10, #0, #0, lt      or, short of one, a move
+              0x1a9f07e9,                         # cset w9, ne               then one update
+              0x51404171,                         # sub w17, w11, #0x10, lsl #12
+              0x1a8b122b,                         # csel w11, w17, w11, ne    taken from the part
+              0xb9018a0b):                        # str w11, [x16, #0x188]
+        emit(w)
+    assert here() == done
+    emit(LDP_POST(10, 11, 31, 16))                # ldp x10, x11, [sp], #16
+    emit(B(here(), back))
+    ctx.put(site, [B(site, start)], 'fluid simulation updates: a step under 1 (a frame shorter than 1/60 s) is carried to the next frame instead of giving no update, and a frame in which the grid moved updates at once')
+
+
 def frame_step(ctx):
     if getattr(ctx, "experimental_fractional", False) and getattr(ctx, "build_id", None) == fractional_build:
         real_speed(ctx)
         dynamic_resolution(ctx)
+        fluid_steps(ctx)
         return
     here, emit, fs_site, fs_put, FS_STATE_OFF, base = ctx.here, ctx.emit, ctx.site, ctx.put, ctx.state, ctx.base
     site = base + 0xe4
@@ -58,6 +111,7 @@ def frame_step(ctx):
     emit(0x1e201828); emit(B(here(), site + 4))   # orig: fdiv s8,s1,s0; back
     fs_put(site, [B(site, start)], 'frame ratio: the host\'s step × base rate / 60 instead of base rate / the game\'s frame rate (state page target fps; 0 = the game\'s ratio)')
     dynamic_resolution(ctx)
+    fluid_steps(ctx)
 
 # The game's dynamic resolution (game__gfx__DynamicResolutionParam: LoadThreshold, ReduceCounterMax, IncreaseCounterMax and a list of levels, each a ResolutionReduceScale and a
 # Priority; on v131072 levels 0..9 at 0.75..0.333 of 2048x1152, 1536x864 to 683x384). Its update (main+0x805aa0) reads the frame's GPU load (about 0.2 ms a unit) into +0x8, subtracts
@@ -100,13 +154,17 @@ def dynamic_resolution(ctx):
 MATCH_FRAME_STEP = {'main': [
     {'name': 'frame ratio from the host\'s step', 'size': 0x9b4, 'fingerprints': ['6ae2aff5344d14568e4dbaf93455e2d8278384bf892ed6c6eca87fef98fbcd1d'], 'stub': frame_step,   # v131072 main+0x6e6be0
      'others': {'dynamic resolution': {'size': 0x294, 'fingerprints': ['7af6ceb0aedf8e0c17dc08ce17fcd6a7cba6d394a0d09e3b504c6d668dc418e7']},   # v131072 main+0x8065e0
-                'dynamic resolution update': {'size': 0xb24, 'fingerprints': ['5a423697838976baf286cffa5e2ceef0d4e037abbcd9d371e90e9e702d61b3d4']}}},   # main+0x805aa0
+                'dynamic resolution update': {'size': 0xb24, 'fingerprints': ['5a423697838976baf286cffa5e2ceef0d4e037abbcd9d371e90e9e702d61b3d4']},   # main+0x805aa0
+                'fluid simulation': {'size': 0x4854, 'fingerprints': ['d70f5d41951d4fcd0a5fc8fc2c8aeebdba0993ef439565927eaea8dbc0d7ca8d']}}},   # main+0x472e0
 ]}
 
 BINDING = [
     {'what': 'frame ratio from the host\'s step', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
      'why': "the game's own frame-ratio division, found by its function's fingerprint on any build that keeps the function",
      'checked': 'v131072 main: one function with this fingerprint, the site and its free registers read by disassembly (2026-11-08)'},
+    {'what': 'fluid simulation updates: a step under 1 carried, a move of the grid updated at once', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
+     'why': "the game's own fluid simulation draw, found by its function's fingerprint on any build that keeps the function; the origin it compares is a field of the game's own object",
+     'checked': 'v131072 main: one function with this fingerprint, the count\'s conversion, the registers free at it and the uniform block\'s bind read by disassembly; the origin words read in play; in play at a 120 target (24 of 24 height textures differing, 23 of 23 origin moves followed, against 1 of 24 and 0 of 8 without), with steps of exactly 1/120 s (an update every other frame, 13 of 13 moves) and at 60 (an update every frame as before, 18 of 18) (2026-11-16)'},
     {'what': 'dynamic resolution: full size, or a climb on the load measured at each level', 'now': 'game', 'goal': 'game', 'purpose': 'rendering',
      'why': "the game's own dynamic-resolution level function and update, found by their functions' fingerprints on any build that keeps both; switchable (DM_DYNAMIC_RESOLUTION)",
      'checked': 'v131072 main: one function with each fingerprint (the level function a leaf, x2..x11 / x16 / x17 / s0..s2 free), its callers, the update and the controller fields read by disassembly, the fields read in play (2026-11-08); the climb run natively against a model of the update and in play to full size (2026-11-09)'},
