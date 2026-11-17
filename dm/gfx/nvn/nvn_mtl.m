@@ -18007,8 +18007,37 @@ static void present_gpu_note(double s, int fx) {
     MLOG("present command buffer GPU time over 600 presents %s: p50 %.3f ms, p95 %.3f ms, max %.3f ms", fx ? "through MetalFX" : "through the bilinear pass", a[299], a[569], a[599]);
     n[fx] = 0;
 }
+// DM_PRESENT_QUEUE=1 (off by default; a test switch): a present that shows a snapshot (DM_PRESENT_SNAP) is committed on a Metal 4 queue of its own. waitForDrawable is a wait of
+// the whole queue, and on the game's queue everything the game committed after a present waited with it: in fullscreen shown directly on a variable-refresh screen (the Metal
+// HUD's "Direct"), where the system shows each present one refresh after its target, the third present in a row waited a whole refresh for its drawable and the GPU idled
+// 7 ms with the next frame's work committed (Ocarina of Time at a 120 fps target on an M3 Max: 96.0 fps, one empty tick in five, against 110.8 fps composited).
+// The two queues are ordered by events: the present waits for its copy (g_snap_ev, the value the copy signals on the game's queue), and the next copy into the same ring
+// slot waits for the slot's last present (g_q4p_ev, signaled on this queue after it; snap_take). A slot's value is stored only once its commit is certain: a value never
+// signaled would hold the game's queue for good. Not with the encode thread (DM_NVN_ENC_THREAD), whose copy is a recorded block with no wait record, and not for a present
+// of the game's own texture, which needs the game's queue order.
+static id<MTL4CommandQueue> g_q4p; static id<MTLSharedEvent> g_q4p_ev;
+static uint64_t g_q4p_v;   // presents committed on g_q4p (the display link's callback or the present thread, one at a time)
+static _Atomic uint64_t g_q4p_slot[4];   // by snapshot ring slot (SNAP_MAX): the g_q4p_v of the last present that reads the slot's texture
+static id<MTLSharedEvent> g_snap_ev;   // tentative: defined with the snapshots below
+static int snap_slot_of(uint64_t serial);
+static int present_queue_on(void) {
+    static int on; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("DM_PRESENT_QUEUE");
+        if (!e || atoi(e) <= 0) return;
+        if (!g_q4 || rec_on()) { MLOG("DM_PRESENT_QUEUE: not used (%s)", !g_q4 ? "no Metal 4 queue" : "the encode thread is on"); return; }
+        // A feedback queue of its own, made and handed over as g_feedback_q is: the descriptor releases the queue it was given when it goes (its property is assign), and a
+        // second descriptor given g_feedback_q released that one a second time (a trap in dispatch_release, t_present_snap)
+        static dispatch_queue_t fq; fq = dispatch_queue_create("dm.nvn.mtl4-present-feedback", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0));
+        NSError *err = nil; MTL4CommandQueueDescriptor *d = [MTL4CommandQueueDescriptor new]; d.feedbackQueue = fq; d.label = @"dm.present";
+        g_q4p = [g_dev newMTL4CommandQueueWithDescriptor:d error:&err]; g_q4p_ev = [g_dev newSharedEvent];
+        if (!g_q4p || !g_q4p_ev) { MLOG("[RED] DM_PRESENT_QUEUE: no second Metal 4 queue (%s); presents stay on the game's", err ? err.localizedDescription.UTF8String : "no shared event"); g_q4p = nil; return; }
+        on = 1; MLOG("present queue (DM_PRESENT_QUEUE): snapshot presents are committed on a queue of their own, so a wait for the drawable does not hold the game's work");
+    });
+    return on;
+}
 static double g_link_it_tin;   // Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
-static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
+static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, uint64_t snap_v) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
@@ -18083,12 +18112,16 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         pthread_mutex_unlock(&g_pq_mu);
     }
     [g_present_alloc4[alloc_i] reset];
-    [g_q4 waitForDrawable:dr];
+    // A snapshot's present on the presents' own queue (present_queue_on): after its copy, which the game's queue signals
+    const int pslot = snap_v && present_queue_on() ? snap_slot_of(t->serial) : -1;
+    id<MTL4CommandQueue> pq4 = pslot >= 0 ? g_q4p : g_q4;
+    if (pslot >= 0) [pq4 waitForEvent:g_snap_ev value:snap_v];
+    [pq4 waitForDrawable:dr];
     id<MTL4CommandBuffer> cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
     int kind = present_encode_m4(cb, src, dr.texture, crop, g_present_uv[alloc_i], &g_fx_present);
     id<MTLResidencySet> drs = ((CAMetalLayer *)dr.layer).residencySet;   // the drawable's
-    if (!kind) { cb_end(cb, drs); [g_q4 signalDrawable:dr]; return 0; }
+    if (!kind) { cb_end(cb, drs); [pq4 signalDrawable:dr]; return 0; }
     int fx_kind = kind == PRESENT_METALFX;
     cb_end(cb, drs);
     MTL4CommitOptions *o = [MTL4CommitOptions new];
@@ -18101,7 +18134,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     }];
     id<MTL4CommandBuffer> buffers[] = {cb};
     pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; pthread_mutex_unlock(&g_pq_mu);
-    [g_q4 commit:buffers count:1 options:o];
+    uint64_t pv = 0; if (pslot >= 0) { pv = ++g_q4p_v; atomic_store(&g_q4p_slot[pslot], pv); }   // stored here, where the commit and its signal are certain
+    [pq4 commit:buffers count:1 options:o];
+    if (pv) [pq4 signalEvent:g_q4p_ev value:pv];   // the slot's next copy waits for it (snap_take)
     if (target_ts > 0) {
         static double leads[300], e2e[300];   // e2e: game enqueue -> system-scheduled present (including the time waiting in the queue for the display-link callback), the full span of input latency that our side can read
         static uint64_t lead_n;
@@ -18117,7 +18152,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
                  (unsigned long long)g_link_dropped, a[149], a[0], b[149], b[0], b[299], (unsigned long long)atomic_load(&g_link_drained), (unsigned long long)g_link_latched, (unsigned long long)g_link_latch_out);
         }
     }
-    [g_q4 signalDrawable:dr];
+    [pq4 signalDrawable:dr];
     g_present_alloc_fence[alloc_i] = ticket;
 #if TARGET_OS_SIMULATOR   // The iOS simulator SDK has no presentation-time callback and no minimum display duration (used only for picture acceptance, display-link ticks are not counted)
     (void)period; [dr present];
@@ -18149,7 +18184,7 @@ static void ext_wait(uint64_t v) { if (v && g_ext_ev) [g_q4 waitForEvent:g_ext_e
 static void snap_commit_wait(uint64_t v);
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in;
-static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], id<CAMetalDrawable>, double);
+static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], id<CAMetalDrawable>, double, uint64_t);
 static double g_link_vperiod, g_link_vhalf;   // virtual ticks (link_range): seconds per counted tick (0 = every callback is a tick) and half a refresh of the screen
 
 @interface NvMetalDisplayLinkDelegate : NSObject <CAMetalDisplayLinkDelegate>
@@ -18285,7 +18320,7 @@ static struct timespec link_deadline(uint64_t ns);
     }
     int submitted;
     ext_wait(it.ev_val); snap_commit_wait(it.snap_v); sub_commit_wait(it.sub_v);
-    @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); mtl_tex_unpin(it.t.serial); }
+    @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp, it.snap_v); mtl_tex_unpin(it.t.serial); }
     g_link_hold_until = submitted && it.period > 0.025 ? update.targetPresentationTimestamp + it.period : 0;
     if (!submitted) {
         pthread_mutex_lock(&g_pq_mu);
@@ -18429,7 +18464,7 @@ static void *present_main(void *arg) {
         pthread_mutex_unlock(&g_pq_mu);
         int submitted;
         ext_wait(it.ev_val); snap_commit_wait(it.snap_v); sub_commit_wait(it.sub_v);
-        @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, 0); mtl_tex_unpin(it.t.serial); }
+        @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, 0, it.snap_v); mtl_tex_unpin(it.t.serial); }
         pthread_mutex_lock(&g_pq_mu); g_classic_busy = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
         if (!submitted) {
             pthread_mutex_lock(&g_pq_mu);
@@ -18509,6 +18544,8 @@ int mtl_snap_on(void) {
     return v;
 }
 static void snap_commit_wait(uint64_t v) { if (v) rec_note_wait(&g_snap_cmt, v); }
+_Static_assert(SNAP_MAX == sizeof g_q4p_slot / sizeof g_q4p_slot[0], "g_q4p_slot has one entry per ring slot");
+static int snap_slot_of(uint64_t serial) { for (int k = 0; k < g_snap_n; k++) if (g_snap[k].serial && g_snap[k].serial == serial) return k; return -1; }   // -1: not a ring texture
 static void snap_drain(void) {
     // Display tickets may have been dropped during suspend, but their copies still belong to the Metal 4 queue.
     uint64_t v = g_snap_v; if (!v) return;
@@ -18581,7 +18618,10 @@ static uint64_t snap_take(const tex_t *t) {
         r = rec_own_put(b, RO_NOTE, 0); r->a[0] = (uint64_t)(uintptr_t)&g_snap_cmt; r->a[1] = v;
         rec_own_push(b);
     } else {
-        pthread_mutex_lock(&g_res_commit_mu); [g_q4 commit:&cb count:1]; [g_q4 signalEvent:g_snap_ev value:v]; pthread_mutex_unlock(&g_res_commit_mu);
+        const uint64_t pv = present_queue_on() ? atomic_load(&g_q4p_slot[k]) : 0;   // the slot's last blit to the screen, when it ran on the presents' queue
+        pthread_mutex_lock(&g_res_commit_mu);
+        if (pv) [g_q4 waitForEvent:g_q4p_ev value:pv];
+        [g_q4 commit:&cb count:1]; [g_q4 signalEvent:g_snap_ev value:v]; pthread_mutex_unlock(&g_res_commit_mu);
         atomic_store(&g_snap_cmt, v);
     }
     g_snap[k].ev = v;

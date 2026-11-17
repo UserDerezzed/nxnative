@@ -302,6 +302,12 @@ t_present_alloc: t_present_alloc.m $(MTL_T_DEP)
 .PHONY: check_t_present_alloc
 check_t_present_alloc: t_present_alloc
 	MTL_DEBUG_LAYER=1 ./t_present_alloc
+# Snapshot presents on a queue of their own (DM_PRESENT_QUEUE): a present held there does not hold the game's queue, and a slot's next copy still follows its last present
+t_present_queue: t_present_queue.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_present_queue.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_present_queue
+check_t_present_queue: t_present_queue
+	MTL_DEBUG_LAYER=1 ./t_present_queue
 # A GPU whose access macOS revoked (DM_TEST_GPU_LOST, set by the test): the front end told once, the game's waits released, presents stopped
 t_gpu_lost: t_gpu_lost.m t_gpu_lost_front.c $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_gpu_lost.m t_gpu_lost_front.c $(MTL_T_SRC) $(FW)
