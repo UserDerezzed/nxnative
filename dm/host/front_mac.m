@@ -712,6 +712,28 @@ void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = 
 - (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; [self fitDrawable]; }
 @end
 
+// DM_COMPOSITE=1, or the Window menu's Composited Presentation (⌃⌘P); off by default: the game's layer is not opaque, which keeps the system from showing it directly (the
+// Metal HUD's "Direct"). Shown directly in fullscreen on a variable-refresh screen the system shows every present one refresh after its target and calls the display link
+// back two refreshes ahead, and at a 120 fps target the layer's three drawables run short: with presents on the game's queue the GPU idled a refresh in every five (96.0
+// fps), and on a queue of their own (DM_PRESENT_QUEUE, nvn_mtl.m) the display link skipped one callback in seven (104.8 fps). With the layer not opaque the link calls back
+// three refreshes ahead and skips none: 109.1 fps, the game's own rate there, a frame reaching the screen about 3 ms later (Ocarina of Time in Kokiri Forest, an M3 Max's
+// built-in screen, macOS 27.2, GPU 7.9 ms a frame). The picture is the same: the layer is blended over the window, which is black behind it.
+// What else was tried on that screen: the window at alpha 0.999 and a 4-point child window over a corner both composite fully (the link calls back five refreshes ahead,
+// presents on their targets, 108.0 fps, about 12 ms later to the screen); a view over the game's, 2 points at alpha 0.05 or the whole picture at alpha 0.01, leaves it
+// direct; DM_PRESENT_LATENCY=1 changes neither the two refreshes of lead nor the late presents
+// (docs/reference/frame-rate.md, Fullscreen shown directly at 120 fps runs short of drawables)
+static int g_comp_on;
+static void composite_set(int on) {   // main thread
+    if (!g_layer || on == g_comp_on) return;
+    g_layer.opaque = !on; g_comp_on = on;
+    LOG("front end: composited presentation %s (DM_COMPOSITE, Window menu)", on ? "on: the game's layer is not opaque, so the system does not show it directly" : "off");
+}
+@interface DmCompositeItem : NSObject <NSMenuItemValidation> @end   // the Window menu item's target
+@implementation DmCompositeItem
+- (void)toggleComposite:(id)sender { (void)sender; composite_set(!g_comp_on); }
+- (BOOL)validateMenuItem:(NSMenuItem *)it { it.state = g_comp_on ? NSControlStateValueOn : NSControlStateValueOff; return YES; }
+@end
+
 // AppKit reports a refused fullscreen request only to the window delegate (there is no notification for it)
 static void (^g_fs_failed)(void);
 @interface DmWinDelegate : NSObject <NSWindowDelegate> @end
@@ -1629,6 +1651,10 @@ void front_run(void (*guest)(void)) {
             dispatch_async(dispatch_get_main_queue(), ^{ [g_cheats_menu showPanel:nil]; });
         [[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""] setSubmenu:wm];
         [wm addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"].keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+        { static DmCompositeItem *ct; ct = [DmCompositeItem new];   // composite_set; not ⌃⌘D, which is the system's Look Up and never reaches the menu
+          NSMenuItem *ci = [wm addItemWithTitle:@"Composited Presentation" action:@selector(toggleComposite:) keyEquivalent:@"p"];
+          ci.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand; ci.target = ct;
+          const char *ce = getenv("DM_COMPOSITE"); if (ce && atoi(ce) > 0) composite_set(1); }
         NSApp.mainMenu = bar;
         const char *fs = getenv("DM_FULLSCREEN");   // 1 (or any value but 0): start in fullscreen; 0, the settings window's Window, or unset: a window
         if (fs && strcmp(fs, "0")) {

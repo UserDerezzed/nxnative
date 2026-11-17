@@ -18007,7 +18007,7 @@ static void present_gpu_note(double s, int fx) {
     MLOG("present command buffer GPU time over 600 presents %s: p50 %.3f ms, p95 %.3f ms, max %.3f ms", fx ? "through MetalFX" : "through the bilinear pass", a[299], a[569], a[599]);
     n[fx] = 0;
 }
-// DM_PRESENT_QUEUE=1 (off by default; a test switch): a present that shows a snapshot (DM_PRESENT_SNAP) is committed on a Metal 4 queue of its own. waitForDrawable is a wait of
+// DM_PRESENT_QUEUE=1 (off by default; frame-rate.md, Fullscreen shown directly at 120 fps runs short of drawables): a present that shows a snapshot (DM_PRESENT_SNAP) is committed on a Metal 4 queue of its own. waitForDrawable is a wait of
 // the whole queue, and on the game's queue everything the game committed after a present waited with it: in fullscreen shown directly on a variable-refresh screen (the Metal
 // HUD's "Direct"), where the system shows each present one refresh after its target, the third present in a row waited a whole refresh for its drawable and the GPU idled
 // 7 ms with the next frame's work committed (Ocarina of Time at a 120 fps target on an M3 Max: 96.0 fps, one empty tick in five, against 110.8 fps composited).
